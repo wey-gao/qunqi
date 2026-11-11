@@ -1036,7 +1036,7 @@ var DEV = (function(){
   }
   return v;
 })();
-var ME = {uid:1001, name:'', kind:'user', code:''}, NET = {base:(location.protocol==='file:'?'__QUNQI_SERVER__':location.origin)};
+var ME = {uid:1001, name:'', kind:'user', code:''}, NET = {base:(location.protocol==='file:'?'http://127.0.0.1:8099':location.origin)};
 var SENT = {}, MRGS = {}, OPMSG = null, MULTI = false, SEL = {}, REPLY = null, NAMES = {}, VOICE = null, CALL = null, PEER = null, CALLDATA = null;
 var READ = JSON.parse(LS.getItem('gw_read')||'{}');
 var MENTION = JSON.parse(LS.getItem('gw_mention')||'{}');
@@ -1757,7 +1757,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.47', UP_URL = '';
+var APP_VER = '0.46', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -1789,7 +1789,7 @@ function connect(){
   if(location.protocol==='https:') proto='wss';
   if(FILE_MODE || SAVED_SRV){
     if(!API_BASE) return;
-    try{ var u=new URL(API_BASE); proto = u.protocol==='https:'?'wss':'ws'; host=u.host; }catch(e){ proto='ws'; host=(API_BASE||location.origin).replace(/^https?:\/\//,'').replace(/\/.*$/,''); }
+    try{ var u=new URL(API_BASE); proto = u.protocol==='https:'?'wss':'ws'; host=u.host; }catch(e){ proto='ws'; host='127.0.0.1:8099'; }
   }
   ws = new WebSocket(proto+'://'+host+'/ws'+(TK?'?token='+encodeURIComponent(TK):''));
   ws.onopen = function(){ ws.send(JSON.stringify({t:'auth', conv:current, device:DEV, name:ME.name, secret:SECRET})); };
@@ -1863,6 +1863,8 @@ function connect(){
     } else if(f.t==='conv_update'){
       CONVS = f.items || []; renderConvs(); applyState();
       if(current && !CONVS.some(function(c){return c.id===current;})){ current = CONVS.length ? CONVS[0].id : ('u'+ME.uid); renderConvs(); applyState(); loadHistory(); }
+    } else if(f.t==='themes_update'){
+      THEMES = mergeThemes(f.themes||THEMES); renderThemes();
     } else if(f.t==='conv_bg'){
       CONVS.forEach(function(c){ if(c.id===f.conv) c.bg=f.bg; });
       if(current===f.conv) applyState();
@@ -1871,8 +1873,9 @@ function connect(){
     }
   };
   ws.onclose = function(){
-    setState(false,'重连中'); retry=Math.min(retry+1,6);
-    setTimeout(connect, 500*retry + Math.random()*300);
+    setState(false,'重连中'); retry=Math.min(retry+1,10);
+    var wait = Math.min(500*Math.pow(1.6,retry), 30000);
+    setTimeout(connect, wait + Math.random()*800);
   };
 }
 
@@ -2379,7 +2382,7 @@ function goServer(v){
 $('btnSrvSave').onclick=function(){ goServer($('srvInput').value); };
 $('btnSrvReset').onclick=function(){
   try{ localStorage.removeItem('gw_server'); localStorage.removeItem('gw_secret'); localStorage.removeItem('gw_token'); }catch(e){}
-  location.href = (API_BASE||location.origin) + '/';
+  location.href = 'http://127.0.0.1:8099/';
 };
 $('btnProfLogout').onclick=function(){
   if(!confirm('退出后本机需要重新进入，服务器聊天记录仍在。')) return;
@@ -2435,10 +2438,11 @@ $('btnRmBg').onclick = async function(){
 
 if($('btnSaveTheme')) $('btnSaveTheme').onclick = async function(){
   var t = themeById(S.theme);
-  var r = await fetch('/api/themes', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name:(t?t.name:'自定义')+' 副本', v:(t&&t.v)||{}})});
+  var r = await fetch('/api/themes', {method:'POST', headers:{'Content-Type':'application/json','X-Device-Secret':SECRET},
+    body: JSON.stringify({device:DEV, name:(t?t.name:'自定义')+' 副本', v:(t&&t.v)||{}})});
+  if(!r.ok){ toast(r.status===409?'自定义主题已满 20 个':'保存失败'); return; }
   var d = await r.json();
-  if(d.theme){ THEMES.push(d.theme); S.theme=d.theme.id; applyState(); renderThemes(); toast('已保存自定义主题'); }
+  if(d.theme){ if(!THEMES.some(function(x){return x.id===d.theme.id;})) THEMES.push(d.theme); S.theme=d.theme.id; applyState(); renderThemes(); toast(d.updated?'主题已更新':'已保存自定义主题'); }
 };
 
 async function loadPlugins(){

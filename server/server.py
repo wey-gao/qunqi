@@ -1792,20 +1792,39 @@ async def put_settings(request: Request, device: str = ""):
 @app.post("/api/themes")
 async def save_theme(request: Request):
     body = await request.json()
-    theme = {"id": "custom_" + uuid.uuid4().hex[:6], "name": (body.get("name") or "我的主题")[:20],
-             "v": body.get("v") or {}}
+    device = str(body.get("device") or "").strip()
+    secret = request.headers.get("X-Device-Secret", "")
+    if not device:
+        raise HTTPException(403, "缺少设备标识")
+    stored = secret_of(device)
+    if not stored or secret != stored:
+        raise HTTPException(403, "设备密钥不正确")
+    name = (body.get("name") or "我的主题")[:20]
     themes = get_setting("custom_themes", [])
+    # 同名覆盖，避免「副本」无限繁殖
+    for t in themes:
+        if t.get("name") == name:
+            t["v"] = body.get("v") or t.get("v") or {}
+            set_setting("custom_themes", themes)
+            return {"ok": True, "theme": t, "updated": True}
+    if len(themes) >= 20:
+        raise HTTPException(409, "自定义主题已达上限 20 个")
+    theme = {"id": "custom_" + uuid.uuid4().hex[:6], "name": name,
+             "v": body.get("v") or {}}
     themes.append(theme)
     set_setting("custom_themes", themes)
-    st = ui_state()
-    st["theme"] = theme["id"]
-    set_setting("ui", st)
-    await broadcast_all({"t": "ui_update", "settings": st, "themes": THEMES + themes})
+    # 只把新主题加进列表，不改变任何人的当前主题
+    await broadcast_all({"t": "themes_update", "themes": THEMES + themes})
     return {"ok": True, "theme": theme}
 
 
 @app.delete("/api/themes/{tid}")
-async def del_theme(tid: str):
+async def del_theme(tid: str, device: str = "", request: Request = None):
+    if not device:
+        raise HTTPException(403, "缺少设备标识")
+    stored = secret_of(device)
+    if not stored or (request is not None and request.headers.get("X-Device-Secret", "") != stored):
+        raise HTTPException(403, "设备密钥不正确")
     themes = [x for x in get_setting("custom_themes", []) if x["id"] != tid]
     set_setting("custom_themes", themes)
     st = ui_state()
@@ -2735,7 +2754,12 @@ async def ws_endpoint(ws: WebSocket):
     except Exception as exc:
         log("客户端异常：" + type(exc).__name__)
     finally:
-        clients.get(conv, set()).discard(ws)
+        try:
+            c = locals().get("conv")
+            if c and clients.get(c):
+                clients[c].discard(ws)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
