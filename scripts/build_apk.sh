@@ -16,6 +16,10 @@ WORK="$OUT/apk-src"
 rm -rf "$WORK"; cp -r "$SRC" "$WORK"
 mkdir -p "$WORK/assets"
 cp "$ROOT/server/static/app.html" "$WORK/assets/app.html"
+AV=$(grep -o "APP_VER *= *'[^']*'" "$WORK/assets/app.html" | head -1 | grep -o "[0-9][0-9.]*" || true)
+if [ -n "${VERSION:-}" ] && [ "$AV" != "${VERSION#v}" ]; then
+  echo "警告：页面 APP_VER=$AV 与 VERSION=$VERSION 不一致，客户端会显示旧版本号"
+fi
 python3 - "$WORK" "$SRV" <<'PY'
 import pathlib, sys
 work, srv = sys.argv[1], sys.argv[2]
