@@ -1246,7 +1246,8 @@ class AgentLink:
             if ASTRBOT_TOKEN:
                 headers["Authorization"] = f"Bearer {ASTRBOT_TOKEN}"
             try:
-                async with websockets.connect(ASTRBOT_WS, additional_headers=headers, ping_interval=15) as ws:
+                async with websockets.connect(ASTRBOT_WS, additional_headers=headers, ping_interval=15,
+                                              max_size=None, max_queue=256) as ws:
                     self.ws = ws
                     self.online = True
                     log("已连接 AstrBot：" + ASTRBOT_WS)
@@ -1256,7 +1257,11 @@ class AgentLink:
                     await self._onebot_read(ws)
             except Exception as exc:
                 if self.online:
-                    log("与 AstrBot 断开：" + type(exc).__name__)
+                    _detail = ""
+                    _rcvd = getattr(exc, "rcvd", None)
+                    if _rcvd is not None:
+                        _detail = f" code={getattr(_rcvd,'code','?')} reason={getattr(_rcvd,'reason','')}"
+                    log("与 AstrBot 断开：" + type(exc).__name__ + _detail)
                 self.online = False
                 self.ws = None
             await asyncio.sleep(3)
