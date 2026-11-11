@@ -19,7 +19,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;overflow:hidden}
-#bg{position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:scale(1.02)}
+#bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:scale(1.02) translateZ(0)}
 #bgOverlay{position:fixed;inset:0;z-index:-1;background:#05070a;opacity:.15;pointer-events:none}
 #app{display:flex;height:100dvh;position:relative}
 
@@ -178,8 +178,8 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 #toast.show{opacity:1;transform:translateX(-50%)}
 
 @media (max-width:760px){
-  #side{position:fixed;top:0;bottom:0;left:0;z-index:22;transform:translateX(-100%);transition:transform .24s cubic-bezier(.2,.8,.2,1);width:min(280px,86vw)}
-  #side.show{transform:none}
+  #side{position:fixed;top:0;bottom:0;left:0;z-index:22;transform:translate3d(-100%,0,0);transition:transform .22s cubic-bezier(.22,.86,.24,1);width:min(280px,86vw);will-change:transform;backface-visibility:hidden;box-shadow:none;border-right:1px solid var(--line)}
+  #side.show{transform:translate3d(0,0,0)}
   #menuBtn{display:grid}
   #list{padding-bottom:152px}
 }
