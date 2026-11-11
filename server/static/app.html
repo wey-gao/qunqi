@@ -526,6 +526,26 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 .ctrow .sw i{flex:1}
 .ctrow .nm{flex:1;min-width:0;font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ctrow .del{width:26px;height:26px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--dim);font-size:14px;line-height:1;padding:0;flex:none}
+
+/* ===== v0.51 首启弹层重设计 ===== */
+#sheetOnboard,#sheetServer{
+  top:50%;right:auto;bottom:auto;left:50%;
+  width:min(380px,92vw);height:auto;max-height:86vh;
+  border:1px solid var(--line);border-left:1px solid var(--line);border-radius:18px;
+  box-shadow:0 24px 64px rgba(17,24,39,.22);
+  transform:translate(-50%,-46%) scale(.97);opacity:0;pointer-events:none;
+  transition:transform .2s cubic-bezier(.2,.8,.2,1),opacity .16s;
+  overflow:hidden;
+}
+#sheetOnboard.show,#sheetServer.show{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
+#sheetOnboard header,#sheetServer header{padding:15px 18px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+#sheetOnboard .sbody,#sheetServer .body{padding:16px 18px calc(16px + env(safe-area-inset-bottom));max-height:calc(86vh - 58px);overflow-y:auto}
+.oblab{display:block;font-size:11.5px;color:var(--dim);margin:0 0 6px;font-weight:500}
+.obinput{width:100%;height:42px;border-radius:11px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-size:14px;outline:none}
+.obinput:focus{border-color:var(--accent)}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink)}
+#sheetOnboard .obrow{align-items:flex-start}
+#sheetOnboard .obav{margin-top:2px}
 </style>
 </head>
 <body>
@@ -641,10 +661,11 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 <div class="sheet" id="sheetOnboard">
   <header><b>设置你的资料</b></header>
   <div class="sbody">
-    <p class="sdesc">昵称和头像会存到服务器，换手机用身份码恢复后会自动带回来。</div>
+    <p class="sdesc">昵称和头像会存到服务器，换手机用身份码恢复后会自动带回来。</p>
     <div class="obrow">
       <div class="obav" id="obAv">+</div>
       <div class="obcol">
+        <label class="oblab" for="obName">昵称</label>
         <input id="obName" maxlength="16" placeholder="输入昵称">
         <div class="obhint">点头像可从相册选图，或拍照</div>
       </div>
@@ -690,13 +711,14 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 </div>
 
 <div class="sheet" id="sheetServer">
-  <header><b>服务器地址</b><button class="close" data-close>×</button></header>
+  <header><b>连接服务器</b><button class="close" data-close>×</button></header>
   <div class="body">
-    <p class="sdesc">填对方网关地址，如 http://1.2.3.4:8099。切换后会重新注册本机身份。</p>
-    <input id="srvInput" placeholder="http://host:8099"
-      style="width:100%;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-size:14px;outline:none">
-    <button class="wbtn" id="btnSrvSave" type="button">连接这个服务器</button>
-    <button class="wbtn" id="btnSrvReset" type="button">恢复默认服务器</button>
+    <p class="sdesc">填写对方网关地址，例如 <span class="mono">http://1.2.3.4:8099</span>。切换后会以当前设备重新注册身份。</p>
+    <label class="oblab" for="srvInput">服务器地址</label>
+    <input id="srvInput" class="obinput" placeholder="http://主机:端口" inputmode="url" autocomplete="url" autocapitalize="off" spellcheck="false">
+    <div class="obhint">以 http:// 或 https:// 开头，末尾不用加斜杠</div>
+    <button class="obbtn" id="btnSrvSave" type="button">连接</button>
+    <button class="obbtn ghost" id="btnSrvReset" type="button">恢复默认服务器</button>
   </div>
 </div>
 
@@ -1757,7 +1779,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.50', UP_URL = '';
+var APP_VER = '0.51', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
