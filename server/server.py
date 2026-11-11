@@ -1607,15 +1607,17 @@ def require_device(device: str) -> int:
     return int(row["uid"])
 
 
-def _read_version() -> str:
+def _read_ver_file(name: str) -> str:
     try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")) as f:
-            return f.read().strip() or "0.1"
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), name)) as f:
+            return f.read().strip()
     except Exception:
-        return "0.1"
+        return ""
 
 
-APP_VERSION = os.getenv("APP_VERSION") or _read_version()
+# 后端版本与前端/安装包版本分开：后端 0.53.1，前端 0.53.0，中间位保持一致
+BACKEND_VERSION = os.getenv("BACKEND_VERSION") or _read_ver_file("VERSION") or "0.1"
+APP_VERSION = os.getenv("APP_VERSION") or _read_ver_file("APP_VERSION") or BACKEND_VERSION
 
 
 @app.get("/api/apk")
@@ -1629,7 +1631,8 @@ async def api_apk():
 
 @app.get("/api/version")
 async def api_version():
-    return {"version": get_setting("app_version", APP_VERSION),
+    return {"version": BACKEND_VERSION,
+            "app_version": get_setting("app_version", APP_VERSION),
             "apk_url": get_setting("apk_url", ""),
             "notes": get_setting("apk_notes", ""),
             "pushed_at": get_setting("apk_pushed_at", 0)}

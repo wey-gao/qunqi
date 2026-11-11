@@ -1786,7 +1786,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.52', UP_URL = '';
+var APP_VER = '0.53.0', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -1802,13 +1802,13 @@ function showUpdate(v, url, notes){
 async function checkVersion(){
   try{
     var r = await fetch('/api/version'); if(!r.ok) return;
-    var d = await r.json();
-    if(!d || !d.version) return;
-    var legacy = /^3\./.test(String(APP_VER)) && /^0\./.test(String(d.version));
-    if(!legacy && !verGt(d.version, APP_VER)){ $('upBar').style.display='none'; return; }
+    var d = await r.json(); if(!d) return;
+    var av = d.app_version || d.version; if(!av) return;
+    var legacy = /^3\./.test(String(APP_VER)) && /^0\./.test(String(av));
+    if(!legacy && !verGt(av, APP_VER)){ $('upBar').style.display='none'; return; }
     var skip=''; try{ skip=localStorage.getItem('gw_upd_skip')||''; }catch(e){}
-    if(skip && !verGt(d.version, skip)){ $('upBar').style.display='none'; return; }
-    showUpdate(d.version, d.apk_url, d.notes);
+    if(skip && !verGt(av, skip)){ $('upBar').style.display='none'; return; }
+    showUpdate(av, d.apk_url, d.notes);
   }catch(e){}
 }
 
@@ -2558,7 +2558,8 @@ $('btnCheckUpd').onclick=async function(){
   $('verNow').textContent='当前 '+APP_VER;
   try{
     var r=await fetch('/api/version'); var d=await r.json();
-    if(d&&d.version&&verGt(d.version,APP_VER)){ showUpdate(d.version,d.apk_url,d.notes); toast('发现新版本 '+d.version); }
+    var av=(d&&(d.app_version||d.version))||'';
+    if(av&&verGt(av,APP_VER)){ showUpdate(av,d.apk_url,d.notes); toast('发现新版本 '+av); }
     else toast('已是最新版本 '+APP_VER);
   }catch(e){ toast('检查失败，请确认服务器可达'); }
 };
