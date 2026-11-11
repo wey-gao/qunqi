@@ -1389,8 +1389,15 @@ function renderMsg(m){
     if(mentions.length) t = t.replace(/@([^\s]+)/g, '<span style="color:var(--accent)">@$1</span>');
     html += t;
   }
-  if(c.attachments && c.attachments.length){
-    html += '<div class="att">'+c.attachments.map(attHtml).join('')+'</div>';
+  var _imgIds = {};
+  (c.images||[]).forEach(function(r){ _imgIds[String(r||'').split('/').pop()]=1; });
+  var _atts = (c.attachments||[]).filter(function(a){
+    if(!a) return false;
+    var k = String(a.file_id||a.media||a.url||'').split('/').pop();
+    return !(a.kind==='image' && _imgIds[k]);
+  });
+  if(_atts.length){
+    html += '<div class="att">'+_atts.map(attHtml).join('')+'</div>';
   }
   if(c.images && c.images.length){
     html += '<div class="att">'+c.images.map(function(ref){

@@ -29,6 +29,8 @@ import sqlite3
 import string
 import time
 import uuid
+import base64
+import urllib.parse
 from urllib.parse import quote, unquote
 
 import uvicorn
@@ -1364,7 +1366,8 @@ class AgentLink:
             row = conv_row(conv)
             event["group_id"] = int(row["num"] or group_num(conv)) if row else group_num(conv)
             # 群里 AstrBot 默认要 @ 才回应，这里自动补一个 @机器人 消息段
-            if not any(x.get("type") == "at" for x in segments):
+            _first = "".join(x.get("data", {}).get("text", "") for x in segments if x.get("type") == "text")
+            if not any(x.get("type") == "at" for x in segments) and not _first.strip().startswith("/"):
                 event["message"] = [{"type": "at", "data": {"qq": str(self.self_id)}}] + event["message"]
         await self._send(event)
 
@@ -2694,6 +2697,9 @@ async def ws_endpoint(ws: WebSocket):
                 extra["dur"] = int(payload.get("dur") or 0)
             if is_agent:
                 extra["agent"] = True
+            # 同一张图别存两份：attachments 已含 file_id/url，images 里重复的剔掉
+            _att_img_ids = {a.get("file_id") for a in attachments if a.get("kind") == "image"}
+            images = [x for x in images if str(x).split("/")[-1] not in _att_img_ids]
             saved = add_message(conv, str(uid), "user", ftype if attachments else "text",
                                 {"text": text, "images": images, "attachments": attachments,
                                  "name": nick, **extra})
@@ -2730,7 +2736,11 @@ async def ws_endpoint(ws: WebSocket):
             if is_group and (row["at_only"] or 0) and uid != BOT_ID and not at_me:
                 # 群开了“仅 @ 回复”，这条只存档广播，不叫 AI
                 continue
+            is_cmd = str(text or "").strip().startswith("/")
             if AGENT_MODE == "onebot":
+                if is_cmd:
+                    # 指令必须原样送出，套了前缀就以【开头，AstrBot 的 / 前缀匹配不上
+                    user_text = str(text).strip()
                 segments.insert(0, {"type": "text", "data": {"text": user_text}})
                 await bot.push(conv, uid, nick, segments, saved["seq"], is_group)
             else:
