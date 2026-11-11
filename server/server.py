@@ -2735,7 +2735,7 @@ async def ws_endpoint(ws: WebSocket):
     except Exception as exc:
         log("客户端异常：" + type(exc).__name__)
     finally:
-        clients.get(conv, set).discard(ws)
+        clients.get(conv, set()).discard(ws)
 
 
 if __name__ == "__main__":
