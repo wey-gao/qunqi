@@ -1,0 +1,9 @@
+services:
+  gateway:
+    build: .
+    restart: unless-stopped
+    env_file: gateway.env
+    ports:
+      - "${PORT:-8099}:8099"
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,9 @@
+# 示例：拦截包含指定词的群消息文本
+BLOCK = {"广告", "加微信"}
+
+def on_message(msg):
+    if msg.get("conv", "").startswith("g") and msg.get("type") == "text":
+        text = (msg.get("content") or {}).get("text", "")
+        if any(w in text for w in BLOCK):
+            return {"content": {"text": "[已被插件拦截]"}}
+    return None

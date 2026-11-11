@@ -1,0 +1,15 @@
+[Unit]
+Description=AI Chat Gateway
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/gateway.env
+ExecStart=__DIR__/.venv/bin/python __DIR__/server.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

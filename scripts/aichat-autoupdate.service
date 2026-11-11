@@ -1,0 +1,7 @@
+[Unit]
+Description=AI Chat Gateway auto update from GitHub Release
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ai-chat-gateway/auto_update.sh

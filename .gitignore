@@ -1,0 +1,8 @@
+*.pyc
+__pycache__/
+*.keystore
+*.jks
+build/
+gateway.env
+data/
+*.db

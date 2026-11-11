@@ -1,0 +1,2742 @@
+"""AI Chat Gateway v0.3.0
+=======================
+
+NapCat 式网关：与 agent（AstrBot 等）同机部署，对外提供一个公网可达的
+HTTP + WebSocket 入口给 App 使用。App 不需要账号密码，只用本地生成的匿名
+device id 识别身份；群聊可凭邀请码公开创建与加入；AI 可创建 / 改名 / 拉人 /
+踢人 / 禁言 / 发公告。
+
+适配层（AGENT_MODE）：
+  - onebot  : 本进程扮演 OneBot v11 协议端，连 AstrBot 的反向 WS（默认）
+  - openai  : 直接对接任意 OpenAI 兼容 /chat/completions
+  - webhook : POST 到自建 agent，返回 {text, actions}
+
+启动：
+  python3 server.py            # 默认 0.0.0.0:8099
+  AGENT_MODE=onebot ASTRBOT_WS=ws://127.0.0.1:6199/ws python3 server.py
+"""
+
+import asyncio
+import hashlib
+import json
+import os
+import pathlib
+import re
+import secrets
+import socket
+import importlib.util
+import sqlite3
+import string
+import time
+import uuid
+from urllib.parse import quote, unquote
+
+import uvicorn
+import websockets
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
+
+BASE = pathlib.Path(__file__).resolve().parent
+DATA = BASE / "data"
+UPLOADS = DATA / "uploads"
+PLUGIN_PATH = BASE / "plugins"
+STATIC = BASE / "static"
+for p in (DATA, UPLOADS, PLUGIN_PATH):
+    p.mkdir(parents=True, exist_ok=True)
+DB = DATA / "chat.db"
+
+AGENT_MODE = os.getenv("AGENT_MODE", "onebot").lower()
+ASTRBOT_WS = os.getenv("ASTRBOT_WS", "ws://127.0.0.1:6199/ws")
+ASTRBOT_TOKEN = os.getenv("ASTRBOT_TOKEN", "")
+BOT_ID = int(os.getenv("BOT_ID", "2001"))
+ADMIN_UIDS = {int(x) for x in os.getenv("ADMIN_UIDS", "").replace(" ", "").split(",") if x.isdigit()}
+ADMIN_CODES = {x.strip().upper() for x in os.getenv("ADMIN_CODES", "").split(",") if x.strip()}
+BOT_NAME = os.getenv("BOT_NAME", "AI 助手")
+OPENAI_BASE = os.getenv("OPENAI_BASE", "")
+OPENAI_KEY = os.getenv("OPENAI_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+AGENT_WEBHOOK = os.getenv("AGENT_WEBHOOK", "")
+PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
+GATEWAY_TOKEN = os.getenv("GATEWAY_TOKEN", "")
+MAX_UPLOAD = int(os.getenv("MAX_UPLOAD_MB", "300")) * 1024 * 1024
+MAX_TOTAL = int(os.getenv("MAX_TOTAL_MB", "2048")) * 1024 * 1024
+UPLOAD_PER_MIN = int(os.getenv("UPLOAD_PER_MIN", "20"))
+_up_rl: dict = {}
+
+app = FastAPI(title="AI Chat Gateway")
+
+SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api/status", "/api/restore", "/api/me"}
+
+
+@app.middleware("http")
+async def secret_guard(request: Request, call_next):
+    """知道 device id 不够，还得有设备密钥；AI 的 device=bot 额外要 BOT_TOKEN。"""
+    path = request.url.path
+    if not path.startswith("/api") or path in SECRET_EXEMPT:
+        return await call_next(request)
+    device = request.query_params.get("device") or ""
+    secret = request.headers.get("x-device-secret") or ""
+    raw = None
+    if not device and request.method in ("POST", "PATCH", "DELETE"):
+        raw = await request.body()
+        try:
+            device = str((json.loads(raw) or {}).get("device") or "")
+        except Exception:
+            device = ""
+        async def replay(body=raw):
+            return {"type": "http.request", "body": body, "more_body": False}
+        request._receive = replay
+        request._body = raw
+    if device:
+        if device in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
+            if BOT_TOKEN and secret != BOT_TOKEN:
+                return JSONResponse({"detail": "AI 口令不正确"}, status_code=403)
+        else:
+            stored = secret_of(device)
+            if stored and secret != stored:
+                return JSONResponse({"detail": "设备密钥不正确"}, status_code=403)
+    return await call_next(request)
+
+from fastapi.middleware.cors import CORSMiddleware
+_orig = [x.strip() for x in os.getenv("CORS_ORIGINS", "").split(",") if x.strip()]
+if not _orig:
+    _orig = [o for o in [PUBLIC_BASE, "http://127.0.0.1:8099", "http://127.0.0.1:8099",
+                         "http://localhost:8099"] if o]
+app.add_middleware(CORSMiddleware, allow_origins=_orig,
+                   allow_origin_regex=r"https://[a-z0-9-]+\.trycloudflare\.com",
+                   allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                   allow_headers=["*"], allow_credentials=False)
+
+
+@app.middleware("http")
+async def token_guard(request: Request, call_next):
+    """GATEWAY_TOKEN 留空=完全开放（默认）；设置了就要求所有接口带 token。"""
+    if GATEWAY_TOKEN and request.url.path.startswith(("/api", "/media")) and not check_token(request):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "token required", "how": "?token= 或 X-Gateway-Token"}, status_code=401)
+    return await call_next(request)
+
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv"}
+AUDIO_EXT = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
+DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".json", ".log",
+           ".py", ".js", ".html", ".css", ".sql", ".yaml", ".yml"}
+
+THEMES = [
+    {"id": "dark_ink", "name": "深色墨黑", "v": {"bg": "#121417", "panel": "#1b1f25", "panel2": "#232830",
+     "line": "#2c323b", "ink": "#e8ecf1", "dim": "#8f98a4", "accent": "#3fb8a0", "user": "#2a3a3a",
+     "ai": "rgba(35,40,48,.92)"}},
+    {"id": "light_clean", "name": "纯白简约", "v": {"bg": "#f2f3f5", "panel": "#ffffff", "panel2": "#f2f3f5",
+     "line": "#e8eaed", "ink": "#111318", "dim": "#8a919c", "accent": "#12b7f5", "user": "#e8f5ff",
+     "ai": "#ffffff"}},
+    {"id": "mono_bw", "name": "纯黑白", "v": {"bg": "#000000", "panel": "#0e0e0e", "panel2": "#1a1a1a",
+     "line": "#2b2b2b", "ink": "#f5f5f5", "dim": "#9a9a9a", "accent": "#ffffff", "user": "#262626",
+     "ai": "#111111"}},
+    {"id": "cyber_blue", "name": "赛博霓虹", "v": {"bg": "#070b16", "panel": "#0d1526", "panel2": "#14203a",
+     "line": "#1e3356", "ink": "#d8e6ff", "dim": "#7d92b8", "accent": "#31c7ff", "user": "#163a5a",
+     "ai": "rgba(14,26,46,.92)"}},
+    {"id": "sakura", "name": "樱花粉", "v": {"bg": "#fdf1f4", "panel": "#ffffff", "panel2": "#fae3e9",
+     "line": "#f2ccd6", "ink": "#40232b", "dim": "#946e78", "accent": "#e0738c", "user": "#fbe0e6",
+     "ai": "#ffffff"}},
+    {"id": "forest", "name": "森林暗夜", "v": {"bg": "#0d1512", "panel": "#131f1a", "panel2": "#1b2b24",
+     "line": "#273c33", "ink": "#dfeee6", "dim": "#87a394", "accent": "#4fbf82", "user": "#1e3a2c",
+     "ai": "rgba(22,36,30,.92)"}},
+    {"id": "ocean", "name": "深海", "v": {"bg": "#071318", "panel": "#0c1d24", "panel2": "#12292f",
+     "line": "#1d3b44", "ink": "#dbedf2", "dim": "#7fa3ad", "accent": "#38b6c4", "user": "#123a44",
+     "ai": "rgba(12,29,36,.92)"}},
+    {"id": "retro_crt", "name": "复古CRT", "v": {"bg": "#0a0a0a", "panel": "#101010", "panel2": "#181818",
+     "line": "#25331f", "ink": "#b9ffb0", "dim": "#6f8f68", "accent": "#39ff14", "user": "#1d2a18",
+     "ai": "rgba(10,14,10,.94)"}},
+    {"id": "pastel", "name": "马卡龙", "v": {"bg": "#f4f1fa", "panel": "#ffffff", "panel2": "#ece6f7",
+     "line": "#ded3f0", "ink": "#2e2740", "dim": "#7a7191", "accent": "#8b6fd4", "user": "#e9e0f9",
+     "ai": "#ffffff"}},
+]
+
+DEFAULT_UI = {
+    "theme": "light_clean",
+    "bg": {"url": "", "brightness": 1.0, "overlay": 0.15, "blur": 0},
+    "avatar": {"url": "", "shape": "circle", "size": 44, "removeBg": False,
+               "border": 2, "borderColor": "#12b7f5"},
+    "bubble": {"radius": 14, "opacity": 1.0},
+    "font": {"size": 15},
+}
+
+
+def log(msg: str) -> None:
+    print(f"[gw] {msg}", flush=True)
+
+
+# ---------------------------------------------------------------- 存储
+def db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+REQUIRED = {
+    "conv": {"id", "type", "name", "avatar", "members", "created_at", "invite", "owner",
+             "mute_until", "announce", "pin", "num", "at_only", "deleted_at", "bg"},
+    "message": {"id", "conv", "sender", "role", "msg_type", "content", "seq", "ts"},
+    "file": {"id", "name", "mime", "kind", "size", "path", "text_len", "note", "ts"},
+    "setting": {"k", "v"},
+    "device": {"device_id", "uid", "name", "created_at", "secret", "avatar"},
+}
+
+
+def migrate(conn) -> None:
+    """旧表结构不兼容则改名留档；兼容但缺列则补列（仅 conv 允许原地补）。"""
+    stamp = int(time.time())
+    for table, cols in REQUIRED.items():
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if not rows:
+            continue
+        have = {r[1] for r in rows}
+        if cols.issuperset(have):
+            missing = cols - have
+            if not missing:
+                continue
+            if table in ("conv", "device"):
+                ddl = {"invite": "TEXT", "owner": "INTEGER DEFAULT 0",
+                       "mute_until": "INTEGER DEFAULT 0", "announce": "TEXT", "at_only": "INTEGER DEFAULT 0",
+                       "pin": "TEXT", "num": "INTEGER DEFAULT 0", "deleted_at": "INTEGER DEFAULT 0",
+                       "avatar": "TEXT", "secret": "TEXT", "bg": "TEXT"}
+                for col in missing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl.get(col, 'TEXT')}")
+                continue
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy_{stamp}")
+        log(f"表 {table} 结构不兼容，已改名保留为 {table}_legacy_{stamp}")
+
+
+def purge_deleted() -> None:
+    conn = db()
+    cut = int(time.time()) - 7 * 86400
+    rows = conn.execute("SELECT id FROM conv WHERE deleted_at>0 AND deleted_at<?", (cut,)).fetchall()
+    for r in rows:
+        conn.execute("DELETE FROM message WHERE conv=?", (r["id"],))
+        conn.execute("DELETE FROM conv WHERE id=?", (r["id"],))
+    conn.commit(); conn.close()
+
+
+def init_db() -> None:
+    conn = db()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS conv (
+            id TEXT PRIMARY KEY, type TEXT, name TEXT, avatar TEXT, members TEXT, created_at INTEGER,
+            invite TEXT, owner INTEGER DEFAULT 0, mute_until INTEGER DEFAULT 0, deleted_at INTEGER DEFAULT 0,
+            announce TEXT, pin TEXT, num INTEGER DEFAULT 0, bg TEXT
+        );
+        CREATE TABLE IF NOT EXISTS message (
+            id TEXT PRIMARY KEY, conv TEXT, sender TEXT, role TEXT, msg_type TEXT,
+            content TEXT, seq INTEGER, ts INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_msg_conv_seq ON message(conv, seq);
+        CREATE TABLE IF NOT EXISTS file (
+            id TEXT PRIMARY KEY, name TEXT, mime TEXT, kind TEXT, size INTEGER,
+            path TEXT, text_len INTEGER, note TEXT, ts INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS setting (k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS device (
+            device_id TEXT PRIMARY KEY, uid INTEGER, name TEXT, created_at INTEGER, secret TEXT, avatar TEXT
+        );
+        CREATE TABLE IF NOT EXISTS ident (
+            device_id TEXT PRIMARY KEY, code TEXT UNIQUE, kind TEXT, created_at INTEGER
+        );
+        """
+    )
+    migrate(conn)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(device)")}
+    if "secret" not in have:
+        conn.execute("ALTER TABLE device ADD COLUMN secret TEXT")
+    if "avatar" not in have:
+        conn.execute("ALTER TABLE device ADD COLUMN avatar TEXT")
+    conn.commit()
+    if not conn.execute("SELECT COUNT(*) c FROM conv").fetchone()["c"]:
+        now = int(time.time())
+        conn.executemany(
+            "INSERT INTO conv (id,type,name,avatar,members,created_at,invite,owner) VALUES (?,?,?,?,?,?,?,?)",
+            [("u1001", "private", BOT_NAME, "", "[]", now, None, 1001),
+             ("g1001", "group", "测试群", "", json.dumps([1001, 2001]), now,
+              "TEST01", 1001)],
+        )
+    for row in conn.execute("SELECT id FROM conv WHERE type='group' AND (invite IS NULL OR invite='')"):
+        conn.execute("UPDATE conv SET invite=? WHERE id=?", (new_invite(), row["id"]))
+    for row in conn.execute("SELECT id FROM conv WHERE type='group' AND (num IS NULL OR num=0)"):
+        conn.execute("UPDATE conv SET num=? WHERE id=?", (group_num(row["id"]), row["id"]))
+    conn.commit()
+    conn.close()
+
+
+def get_setting(key: str, default):
+    conn = db()
+    row = conn.execute("SELECT v FROM setting WHERE k=?", (key,)).fetchone()
+    conn.close()
+    if not row:
+        return default
+    try:
+        return json.loads(row["v"])
+    except Exception:
+        return default
+
+
+def set_setting(key: str, value) -> None:
+    conn = db()
+    conn.execute("INSERT INTO setting (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                 (key, json.dumps(value, ensure_ascii=False)))
+    conn.commit()
+    conn.close()
+
+
+def ui_state() -> dict:
+    state = get_setting("ui", None) or json.loads(json.dumps(DEFAULT_UI))
+    for k, v in DEFAULT_UI.items():
+        if k not in state:
+            state[k] = json.loads(json.dumps(v))
+        elif isinstance(v, dict):
+            for kk, vv in v.items():
+                state[k].setdefault(kk, vv)
+    return state
+
+
+# ---------------------------------------------------------------- 匿名身份
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def new_identity_code() -> str:
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(6))
+
+
+def is_admin(uid: int) -> bool:
+    """服务器管理员 = BOT_ID，或 ADMIN_UIDS / ADMIN_CODES 解析出的账号，或 setting 里热加的管理员。"""
+    if uid == BOT_ID or uid in ADMIN_UIDS:
+        return True
+    try:
+        return int(uid) in [int(x) for x in (get_setting("admin_uids", []) or [])]
+    except Exception:
+        return False
+
+
+def resolve_admin_codes() -> None:
+    """启动时把 ADMIN_CODES 解析成 uid 并入 ADMIN_UIDS。"""
+    if not ADMIN_CODES:
+        return
+    conn = db()
+    marks = ",".join("?" * len(ADMIN_CODES))
+    rows = conn.execute(f"SELECT device_id, code FROM ident WHERE code IN ({marks})",
+                        tuple(ADMIN_CODES)).fetchall()
+    for r in rows:
+        d = conn.execute("SELECT uid FROM device WHERE device_id=?", (r["device_id"],)).fetchone()
+        if d:
+            ADMIN_UIDS.add(int(d["uid"]))
+            log(f"管理员身份码 {r['code']} -> uid {d['uid']}")
+    conn.close()
+
+
+def ident_of(device_id: str, kind: str = "user") -> tuple:
+    """给每台设备一个 6 位身份码；agent 与用户共用同一套协议，只是 kind 不同。"""
+    conn = db()
+    row = conn.execute("SELECT code,kind FROM ident WHERE device_id=?", (device_id,)).fetchone()
+    if row:
+        code = row["code"]
+        if kind == "agent" and (row["kind"] or "") != "agent":
+            conn.execute("UPDATE ident SET kind='agent' WHERE device_id=?", (device_id,))
+            conn.commit()
+        conn.close()
+        return code, (kind if kind == "agent" else (row["kind"] or "user"))
+    for _ in range(10):
+        code = new_identity_code()
+        try:
+            conn.execute("INSERT INTO ident (device_id,code,kind,created_at) VALUES (?,?,?,?)",
+                         (device_id, code, kind, int(time.time())))
+            conn.commit(); conn.close()
+            return code, kind
+        except Exception:
+            continue
+    conn.close()
+    return "", kind
+
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
+
+def ensure_secret(device_id: str) -> str:
+    """每台设备一个随机密钥，防止知道 device id 就能冒充。"""
+    conn = db()
+    row = conn.execute("SELECT secret FROM device WHERE device_id=?", (device_id,)).fetchone()
+    sec = (row["secret"] if row else "") or ""
+    if not sec:
+        sec = "sk_" + secrets.token_urlsafe(24)
+        conn.execute("UPDATE device SET secret=? WHERE device_id=?", (sec, device_id))
+        conn.commit()
+    conn.close()
+    return sec
+
+
+def secret_of(device_id: str) -> str:
+    conn = db()
+    row = conn.execute("SELECT secret FROM device WHERE device_id=?", (device_id,)).fetchone()
+    conn.close()
+    return (row["secret"] if row else "") or ""
+
+
+def device_profile(device_id: str, name: str = "", kind: str = "user") -> dict:
+    """没有账号密码：device id 决定一个稳定的数字 uid，昵称可改。"""
+    device_id = (device_id or "").strip()[:64]
+    if device_id in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
+        conn = db()
+        row = conn.execute("SELECT * FROM device WHERE device_id='bot'").fetchone()
+        if row is None:
+            conn.execute("INSERT INTO device (device_id,uid,name,created_at) VALUES ('bot',?,?,?)",
+                         (BOT_ID, BOT_NAME, int(time.time())))
+            conn.commit()
+        conn.close()
+        name_out = BOT_NAME
+        return {"device_id": "bot", "uid": BOT_ID, "name": name_out, "code": "", "kind": "agent",
+                "admin": True, "secret": BOT_TOKEN}
+    if not device_id:
+        device_id = "anon-" + secrets.token_hex(8)
+    h = hashlib.sha1(device_id.encode()).hexdigest()
+    uid = 100000 + int(h[:7], 16) % 800000
+    conn = db()
+    row = conn.execute("SELECT * FROM device WHERE device_id=?", (device_id,)).fetchone()
+    if row:
+        if name and name != row["name"]:
+            conn.execute("UPDATE device SET name=? WHERE device_id=?", (name[:16], device_id))
+            conn.commit()
+        uid, nick = row["uid"], (name[:16] or row["name"])
+    else:
+        nick = (name[:16] or ("访客" + device_id[-4:]))
+        conn.execute("INSERT INTO device (device_id,uid,name,created_at) VALUES (?,?,?,?)",
+                     (device_id, uid, nick, int(time.time())))
+        conn.commit()
+    conn.close()
+    if uid in banned_uids():
+        raise HTTPException(403, "该账号已被移出服务器")
+    av = ""
+    try:
+        conn2 = db()
+        r2 = conn2.execute("SELECT avatar FROM device WHERE device_id=?", (device_id,)).fetchone()
+        conn2.close()
+        av = (r2["avatar"] or "") if r2 else ""
+    except Exception:
+        av = ""
+    code, kind2 = ident_of(device_id, kind)
+    return {"device_id": device_id, "uid": uid, "name": nick, "code": code, "kind": kind2,
+            "admin": is_admin(uid), "secret": ensure_secret(device_id), "avatar": av}
+
+
+def uid_name(uid: int) -> str:
+    if uid == BOT_ID:
+        return BOT_NAME
+    conn = db()
+    row = conn.execute("SELECT name FROM device WHERE uid=? ORDER BY created_at LIMIT 1", (uid,)).fetchone()
+    conn.close()
+    return row["name"] if row else ("用户" + str(uid)[-4:])
+
+
+def check_token(request_or_ws) -> bool:
+    if not GATEWAY_TOKEN:
+        return True
+    header = ""
+    try:
+        header = request_or_ws.headers.get("x-gateway-token", "")
+    except Exception:
+        header = ""
+    if header and header == GATEWAY_TOKEN:
+        return True
+    token = ""
+    try:
+        token = request_or_ws.query_params.get("token", "")
+    except Exception:
+        token = ""
+    return token == GATEWAY_TOKEN
+
+
+# ---------------------------------------------------------------- 会话 / 群
+def group_num(cid: str) -> int:
+    if cid == "g1001":
+        return 1001
+    return 1000000 + int(hashlib.sha1(cid.encode()).hexdigest()[:6], 16) % 9000000
+
+
+def conv_by_num(num: int) -> str | None:
+    conn = db()
+    row = conn.execute("SELECT id FROM conv WHERE num=?", (num,)).fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def new_invite() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(6))
+
+
+def conv_row(cid: str):
+    conn = db()
+    row = conn.execute("SELECT * FROM conv WHERE id=?", (cid,)).fetchone()
+    conn.close()
+    return row
+
+
+def members_of(cid: str) -> list:
+    row = conv_row(cid)
+    if row is None:
+        return []
+    try:
+        return [int(x) for x in json.loads(row["members"] or "[]")]
+    except Exception:
+        return []
+
+
+def set_members(cid: str, members: list) -> None:
+    conn = db()
+    conn.execute("UPDATE conv SET members=? WHERE id=?",
+                 (json.dumps(sorted(set(int(m) for m in members)), ensure_ascii=False), cid))
+    conn.commit()
+    conn.close()
+
+
+def create_group(name: str, owner: int, members: list | None = None) -> dict:
+    cid = "g" + uuid.uuid4().hex[:8]
+    invite = new_invite()
+    ms = sorted(set([owner, BOT_ID] + (members or [])))
+    conn = db()
+    conn.execute("INSERT INTO conv (id,type,name,avatar,members,created_at,invite,owner,mute_until,"
+                 "announce,pin,num) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (cid, "group", (name or "新群聊")[:24], "", json.dumps(ms), int(time.time()),
+                  invite, owner, 0, "", "", group_num(cid)))
+    conn.commit()
+    conn.close()
+    log(f"建群 {cid} / {name} / 邀请码 {invite}")
+    add_message(cid, "system", "sys", "sys",
+                {"text": f"群已创建，邀请码 {invite}。把邀请链接发给朋友即可加入，无需账号。"})
+    return {"id": cid, "name": name, "invite": invite, "members": ms, "owner": owner}
+
+
+def join_group(invite: str, uid: int) -> dict:
+    conn = db()
+    row = conn.execute("SELECT * FROM conv WHERE invite=?", ((invite or "").upper(),)).fetchone()
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "邀请码无效")
+    ms = members_of(row["id"])
+    if uid not in ms:
+        ms.append(uid)
+        set_members(row["id"], ms)
+    return {"id": row["id"], "name": row["name"], "members": ms}
+
+
+def add_member(cid: str, uid: int) -> bool:
+    ms = members_of(cid)
+    if uid in ms:
+        return False
+    ms.append(uid)
+    set_members(cid, ms)
+    return True
+
+
+def remove_member(cid: str, uid: int) -> bool:
+    ms = members_of(cid)
+    if uid not in ms:
+        return False
+    ms = [m for m in ms if m != uid]
+    set_members(cid, ms)
+    return True
+
+
+def ensure_access(cid: str, uid: int) -> bool:
+    """公开群（演示群 g1001）首次进入自动成为成员。"""
+    row = conv_row(cid)
+    if row is not None and (row["deleted_at"] or 0):
+        return False
+    if not cid.startswith("g"):
+        return True
+    if uid in members_of(cid):
+        return True
+    if cid == "g1001":
+        add_member(cid, uid)
+        return True
+    return False
+
+
+def ensure_private(uid: int) -> None:
+    """每个设备进来自动拥有自己的私聊 u<uid>，不再共用演示会话 u1001。"""
+    if not uid:
+        return
+    cid = f"u{uid}"
+    conn = db()
+    row = conn.execute("SELECT id FROM conv WHERE id=?", (cid,)).fetchone()
+    if row is None:
+        conn.execute("INSERT OR REPLACE INTO conv (id,type,name,avatar,members,created_at,invite,owner,"
+                     "mute_until,announce,pin,num) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (cid, "private", BOT_NAME, "", json.dumps([uid, BOT_ID]), int(time.time()),
+                      "", uid, 0, "", "", ""))
+        conn.commit()
+    conn.close()
+
+
+def conv_list(uid: int = 0) -> list:
+    conn = db()
+    rows = [r for r in conn.execute("SELECT * FROM conv ORDER BY type DESC, created_at").fetchall()
+            if not (r["deleted_at"] or 0)]
+    seqs = {r["conv"]: r["s"] for r in conn.execute(
+        "SELECT conv, MAX(seq) s FROM message GROUP BY conv").fetchall()}
+    conn.close()
+    out = []
+    for r in rows:
+        members = []
+        try:
+            members = [int(x) for x in json.loads(r["members"] or "[]")]
+        except Exception:
+            pass
+        if r["type"] == "private" and uid and r["id"] != f"u{uid}":
+            # 别人的私聊不下发
+            continue
+        if (r["type"] == "private" and uid and r["id"] == f"u{uid}" and int(uid) != BOT_ID
+                and not get_setting("sys", {}).get("show_ai_all", True) and not is_admin(int(uid))):
+            # 管理员关闭「所有人可见 AI 助手」：非管理员列表里不再出现与 AI 的私聊
+            continue
+        if r["type"] == "dm" and BOT_ID in members:
+            continue
+        if r["type"] == "dm" and uid and uid not in members:
+            continue
+        if r["type"] == "group" and uid and uid not in members and r["id"] != "g1001":
+            # 未加入的群不下发（保留演示群）
+            continue
+        cname = r["name"]
+        if r["type"] == "dm" and uid:
+            other = [m for m in members if m != int(uid)]
+            if other:
+                cname = uid_name(other[0])
+        out.append({"id": r["id"], "type": r["type"], "name": cname, "avatar": r["avatar"],
+                    "members": members, "invite": r["invite"], "owner": r["owner"],
+                    "mute_until": r["mute_until"] or 0, "announce": r["announce"] or "",
+                    "pin": r["pin"] or "", "created_at": r["created_at"],
+                    "bg": json.loads(r["bg"]) if (r["bg"] or "").strip() else None,
+                    "last_seq": seqs.get(r["id"], 0)})
+    return out
+
+
+def conv_public(cid: str) -> dict | None:
+    backends = net_info()
+    for c in conv_list(0):
+        if c["id"] == cid:
+            c = dict(c)
+            c["join_url"] = f"{backends['base']}/?join={c.get('invite') or ''}"
+            return c
+    return None
+
+
+def rename_conv(cid: str, name: str) -> None:
+    if not cid or not name:
+        return
+    conn = db()
+    conn.execute("UPDATE conv SET name=? WHERE id=?", (name[:24], cid))
+    conn.commit()
+    conn.close()
+
+
+def announce(cid: str, text: str) -> None:
+    conn = db()
+    conn.execute("UPDATE conv SET announce=? WHERE id=?", (text[:200], cid))
+    conn.commit()
+    conn.close()
+
+
+def mute_minutes(cid: str, minutes: int) -> None:
+    mute_conv(cid, minutes)
+
+
+def banned_uids() -> list:
+    return [int(x) for x in (get_setting("banned_uids", []) or [])]
+
+
+def set_banned(uids: list) -> None:
+    set_setting("banned_uids", uids)
+
+
+def mute_conv(cid: str, minutes: int) -> None:
+    conn = db()
+    conn.execute("UPDATE conv SET mute_until=? WHERE id=?",
+                 (int(time.time()) + max(0, minutes) * 60 if minutes > 0 else 0, cid))
+    conn.commit()
+    conn.close()
+
+
+def pin_message(cid: str, msg_id: str) -> None:
+    conn = db()
+    conn.execute("UPDATE conv SET pin=? WHERE id=?", (msg_id or "", cid))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------- 消息
+def next_seq(conv: str) -> int:
+    conn = db()
+    row = conn.execute("SELECT COALESCE(MAX(seq),0) s FROM message WHERE conv=?", (conv,)).fetchone()
+    conn.close()
+    return int(row["s"]) + 1
+
+
+def msg_quote(conv: str, seq: int) -> dict:
+    conn = db()
+    row = conn.execute("SELECT * FROM message WHERE conv=? AND seq=?", (conv, seq)).fetchone()
+    conn.close()
+    if not row:
+        return {}
+    c = json.loads(row["content"] or "{}")
+    return {"seq": seq, "sender": row["sender"], "role": row["role"],
+            "name": c.get("name") or ("AI" if row["role"] == "bot" else "成员"),
+            "text": (c.get("text") or "")[:120]}
+
+
+def prune_messages(conv: str, keep: int = 5000) -> None:
+    """服务器保留每会话最近 N 条（默认 5000），保证检索能查到更多历史。"""
+    conn = db()
+    mx = conn.execute("SELECT MAX(seq) m FROM message WHERE conv=?", (conv,)).fetchone()["m"] or 0
+    if mx > keep:
+        conn.execute("DELETE FROM message WHERE conv=? AND seq<=?", (conv, mx - keep))
+        conn.commit()
+    conn.close()
+
+
+PLUGINS: list = []
+PLUGIN_DIR = pathlib.Path(__file__).resolve().parent / "plugins"
+
+
+def load_plugins() -> None:
+    """加载 plugins/*.py，每个模块可定义 on_message(msg) -> dict|None。
+
+    约定：只允许改文本类字段，抛异常不影响主流程。"""
+    PLUGINS.clear()
+    if not PLUGIN_DIR.exists():
+        return
+    for f in sorted(PLUGIN_DIR.glob("*.py")):
+        if f.name.startswith("_"):
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("gwplug_" + f.stem, f)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            fn = getattr(mod, "on_message", None)
+            if callable(fn):
+                PLUGINS.append((f.stem, fn))
+                log(f"插件已加载: {f.stem}")
+        except Exception as e:
+            log(f"插件 {f.name} 加载失败: {e}")
+
+
+def run_message_plugins(msg: dict) -> dict:
+    for name, fn in PLUGINS:
+        try:
+            out = fn(dict(msg))
+            if isinstance(out, dict) and out.get("content"):
+                msg["content"] = out["content"]
+        except Exception as e:
+            log(f"插件 {name} 执行异常: {e}")
+    return msg
+
+
+def fire_webhook(msg: dict) -> None:
+    """把新消息 POST 给外部 agent（AGENT_WEBHOOK），失败不影响聊天。"""
+    url = os.environ.get("AGENT_WEBHOOK", "").strip()
+    if not url:
+        return
+    headers = {"Content-Type": "application/json"}
+    sec = os.environ.get("AGENT_WEBHOOK_SECRET", "").strip()
+    if sec:
+        headers["X-Webhook-Secret"] = sec
+
+    async def _post():
+        try:
+            async with httpx.AsyncClient(timeout=4) as cli:
+                await cli.post(url, json=msg, headers=headers)
+        except Exception as e:
+            log(f"webhook 失败: {e}")
+
+    try:
+        asyncio.get_running_loop().create_task(_post())
+    except RuntimeError:
+        pass
+
+
+def add_message(conv: str, sender: str, role: str, msg_type: str, content: dict) -> dict:
+    content = run_message_plugins({"conv": conv, "sender": sender, "role": role,
+                                   "type": msg_type, "content": content})["content"]
+    conn = db()
+    seq = next_seq(conv)
+    mid = "m-" + uuid.uuid4().hex[:12]
+    ts = int(time.time() * 1000)
+    conn.execute("INSERT INTO message (id,conv,sender,role,msg_type,content,seq,ts) VALUES (?,?,?,?,?,?,?,?)",
+                 (mid, conv, sender, role, msg_type, json.dumps(content, ensure_ascii=False), seq, ts))
+    conn.commit()
+    conn.close()
+    if seq % 20 == 0:
+        prune_messages(conv)
+    out = {"id": mid, "conv": conv, "sender": sender, "role": role, "type": msg_type,
+           "content": content, "seq": seq, "ts": ts}
+    fire_webhook(out)
+    return out
+
+
+def history(conv: str, limit: int = 60, after: int = 0) -> list:
+    conn = db()
+    if after:
+        rows = conn.execute("SELECT * FROM message WHERE conv=? AND seq>? ORDER BY seq LIMIT ?",
+                            (conv, after, limit)).fetchall()
+        rows = list(rows)
+    else:
+        rows = conn.execute("SELECT * FROM message WHERE conv=? ORDER BY seq DESC LIMIT ?",
+                            (conv, limit)).fetchall()
+        rows = list(reversed(rows))
+    conn.close()
+    out = []
+    for r in rows:
+        out.append({"id": r["id"], "conv": r["conv"], "sender": r["sender"], "role": r["role"],
+                    "type": r["msg_type"], "content": json.loads(r["content"]),
+                    "seq": r["seq"], "ts": r["ts"]})
+    return out
+
+
+# ---------------------------------------------------------------- 文档解析
+def extract_text(path: pathlib.Path) -> str:
+    ext = path.suffix.lower()
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            parts = []
+            for i, page in enumerate(PdfReader(str(path)).pages, 1):
+                try:
+                    t = page.extract_text() or ""
+                except Exception:
+                    t = ""
+                if t.strip():
+                    parts.append(f"[第{i}页]\n{t.strip()}")
+            return "\n".join(parts)
+        if ext == ".docx":
+            from docx import Document
+            doc = Document(str(path))
+            parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            for ti, table in enumerate(doc.tables, 1):
+                rows = ["| " + " | ".join(c.text.strip().replace("\n", " ") for c in r.cells) + " |"
+                        for r in table.rows[:60]]
+                if rows:
+                    parts.append(f"[表{ti}]\n" + "\n".join(rows))
+            return "\n".join(parts)
+        if ext in (".xlsx", ".xlsm"):
+            from openpyxl import load_workbook
+            wb = load_workbook(str(path), read_only=True, data_only=True)
+            parts = []
+            for ws in wb.worksheets[:5]:
+                parts.append(f"[工作表：{ws.title}]")
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i > 80:
+                        parts.append("…(截断)")
+                        break
+                    cells = ["" if v is None else str(v) for v in row[:12]]
+                    if any(c.strip() for c in cells):
+                        parts.append("| " + " | ".join(cells) + " |")
+            wb.close()
+            return "\n".join(parts)
+        if ext == ".pptx":
+            from pptx import Presentation
+            parts = []
+            for i, slide in enumerate(Presentation(str(path)).slides, 1):
+                buf = [s.text_frame.text.strip() for s in slide.shapes
+                       if getattr(s, "has_text_frame", False) and s.text_frame.text.strip()]
+                if buf:
+                    parts.append(f"[第{i}页]\n" + "\n".join(buf))
+            return "\n".join(parts)
+        return path.read_bytes().decode("utf-8", errors="replace")
+    except Exception as exc:
+        return f"[解析失败：{type(exc).__name__}]"
+
+
+def classify(ext: str) -> str:
+    if ext in IMAGE_EXT:
+        return "image"
+    if ext in VIDEO_EXT:
+        return "video"
+    if ext in AUDIO_EXT:
+        return "audio"
+    if ext in DOC_EXT:
+        return "doc"
+    return "other"
+
+
+# ---------------------------------------------------------------- 图像
+def remove_background(src: pathlib.Path, dst: pathlib.Path, tolerance: int = 46) -> bool:
+    try:
+        from PIL import Image
+        img = Image.open(src).convert("RGBA")
+        w, h = img.size
+        px = img.load()
+        corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+        base = corners[0]
+        for c in corners:
+            if sum(abs(a - b) for a, b in zip(c[:3], base[:3])) > tolerance:
+                return False
+        tol2 = tolerance * tolerance * 3
+        stack = ([(x, 0) for x in range(w)] + [(x, h - 1) for x in range(w)] +
+                 [(0, y) for y in range(h)] + [(w - 1, y) for y in range(h)])
+        seen = bytearray(w * h)
+        while stack:
+            x, y = stack.pop()
+            if x < 0 or y < 0 or x >= w or y >= h:
+                continue
+            idx = y * w + x
+            if seen[idx]:
+                continue
+            p = px[x, y]
+            if p[3] == 0:
+                seen[idx] = 1
+                continue
+            d = (p[0] - base[0]) ** 2 + (p[1] - base[1]) ** 2 + (p[2] - base[2]) ** 2
+            if d > tol2:
+                continue
+            seen[idx] = 1
+            px[x, y] = (p[0], p[1], p[2], 0)
+            stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)])
+        bbox = img.getbbox()
+        if bbox:
+            img = img.crop(bbox)
+        img.save(dst, "PNG")
+        return True
+    except Exception as exc:
+        log("去背失败：" + type(exc).__name__)
+        return False
+
+
+def palette_from_image(path: pathlib.Path) -> dict:
+    from PIL import Image
+    img = Image.open(path).convert("RGB").resize((64, 64))
+    q = img.quantize(colors=8, method=Image.MEDIANCUT).convert("RGB")
+    counts = {}
+    for p in q.getdata():
+        counts[p] = counts.get(p, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: -kv[1])
+    total = sum(counts.values())
+
+    def neutral(c):
+        return max(c) - min(c) < 18
+
+    accent = ordered[0][0]
+    for c, n in ordered:
+        if not neutral(c) and n / total > 0.05:
+            accent = c
+            break
+    lum = 0.299 * accent[0] + 0.587 * accent[1] + 0.114 * accent[2]
+    dark = lum < 140
+    return {"v": {
+        "bg": "#101216" if dark else "#f6f7f9",
+        "panel": "#101317" if dark else "#ffffff",
+        "panel2": "#1b1f25" if dark else "#eef0f3",
+        "line": "#2c323b" if dark else "#dfe3e8",
+        "ink": "#e8ecf1" if dark else "#1c2128",
+        "dim": "#8f98a4" if dark else "#6b7480",
+        "accent": "#%02x%02x%02x" % accent,
+        "user": "#%02x%02x%02x" % tuple(min(255, int(c * 0.55 + (0 if dark else 190))) for c in accent),
+        "ai": "rgba(27,31,37,.92)" if dark else "#ffffff",
+    }}
+
+
+# ---------------------------------------------------------------- 模糊意图
+def parse_intent(text: str, has_image: bool = False) -> list:
+    t = (text or "").strip()
+    acts = []
+    if not t:
+        return acts
+
+    if has_image and any(k in t for k in ("这张图", "根据图", "按这张", "配个主题", "配色", "这图")):
+        acts.append({"type": "theme.from_image"})
+
+    if any(k in t for k in ("太亮", "好亮", "刺眼", "晃眼")):
+        acts.append({"type": "bg.set", "payload": {"brightness": 0.55, "overlay": 0.42}})
+    elif any(k in t for k in ("太暗", "好黑", "看不清")):
+        acts.append({"type": "bg.set", "payload": {"brightness": 1.18, "overlay": 0.06}})
+
+    if any(k in t for k in ("太花", "太乱", "太杂")):
+        acts.append({"type": "bg.set", "payload": {"blur": 10, "overlay": 0.35}})
+    if any(k in t for k in ("太糊", "清楚一点", "清晰")):
+        acts.append({"type": "bg.set", "payload": {"blur": 0}})
+
+    if "头像" in t and any(k in t for k in ("大", "放大")):
+        acts.append({"type": "avatar.set", "payload": {"size": 56}})
+    if "头像" in t and any(k in t for k in ("小", "缩小")):
+        acts.append({"type": "avatar.set", "payload": {"size": 32}})
+
+    if any(k in t for k in ("圆形", "圆的", "圆头像")):
+        acts.append({"type": "avatar.set", "payload": {"shape": "circle"}})
+    if any(k in t for k in ("方形", "方的", "方头像", "圆角方")):
+        acts.append({"type": "avatar.set", "payload": {"shape": "square"}})
+
+    if any(k in t for k in ("去背", "抠掉背景", "透明底", "去掉背景", "只要主体")):
+        acts.append({"type": "avatar.set", "payload": {"removeBg": True}})
+
+    if "黑白" in t:
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "mono_bw"}})
+    elif "赛博" in t:
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "cyber_blue"}})
+    elif any(k in t for k in ("可爱", "粉色", "樱花", "少女")):
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "sakura"}})
+    elif any(k in t for k in ("简约", "干净", "清爽")):
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "light_clean"}})
+    elif any(k in t for k in ("暗色", "暗黑", "黑底")):
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "dark_ink"}})
+    elif any(k in t for k in ("森林", "绿色")):
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "forest"}})
+    elif any(k in t for k in ("海洋", "深海", "蓝色")):
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "ocean"}})
+    elif any(k in t for k in ("复古", "终端", "极客")):
+        acts.append({"type": "theme.apply", "payload": {"theme_id": "retro_crt"}})
+
+    if any(k in t for k in ("换壁纸", "换背景", "换个背景", "随机背景")):
+        acts.append({"type": "bg.random"})
+
+    if any(k in t for k in ("字大", "字体大")):
+        acts.append({"type": "font.set", "payload": {"size": 17}})
+    if any(k in t for k in ("字小", "字体小")):
+        acts.append({"type": "font.set", "payload": {"size": 14}})
+
+    # ---- 群管理意图（AI 只有拿到 group 语境才执行，见 ws 处理）
+    m = re.search(r"(?:建|开|拉)(?:个|一个)?群(?:叫|名叫|：|:)?\s*[「“\"]?(.{1,16}?)[」”\"]?$", t)
+    if m:
+        acts.append({"type": "chat.create", "payload": {"name": m.group(1)}})
+    m = re.search(r"(?:把)?群名(?:改成|改为|叫)\s*[「“\"]?(.{1,16}?)[」”\"]?$", t)
+    if m:
+        acts.append({"type": "chat.rename", "payload": {"name": m.group(1)}})
+    m = re.search(r"禁言\s*(\d+)\s*(分钟|小时)", t)
+    if m:
+        mins = int(m.group(1)) * (60 if m.group(2) == "小时" else 1)
+        acts.append({"type": "chat.mute", "payload": {"minutes": mins}})
+    m = re.search(r"(?:发个?|设置?)?公告(?:说|：|:)?\s*(.{1,60})$", t)
+    if m:
+        acts.append({"type": "chat.announce", "payload": {"text": m.group(1)}})
+    return acts
+
+
+WALLPAPERS = [["#1b2735", "#090a0f"], ["#2b1a2f", "#0d0611"], ["#10231f", "#050c0a"],
+              ["#2a2118", "#0c0906"], ["#16233a", "#070b14"]]
+_wp = {"i": 0}
+
+
+def set_conv_bg(cid: str, data: dict) -> dict:
+    """群背景：整群统一，存 conv.bg。空 url 表示恢复默认。"""
+    cur = {}
+    conn = db()
+    row = conn.execute("SELECT bg FROM conv WHERE id=?", (cid,)).fetchone()
+    if row and (row["bg"] or "").strip():
+        try:
+            cur = json.loads(row["bg"])
+        except Exception:
+            cur = {}
+    for k in ("url", "gradient"):
+        if k in data:
+            cur[k] = data.get(k) or ""
+    for k, lo, hi in (("brightness", 0.2, 1.3), ("overlay", 0, 0.9)):
+        if k in data:
+            try:
+                cur[k] = max(lo, min(hi, float(data[k])))
+            except Exception:
+                pass
+    if "blur" in data:
+        try:
+            cur["blur"] = max(0, min(24, int(data["blur"])))
+        except Exception:
+            pass
+    conn.execute("UPDATE conv SET bg=? WHERE id=?", (json.dumps(cur, ensure_ascii=False), cid))
+    conn.commit(); conn.close()
+    return cur
+
+
+def apply_actions(actions: list, conv: str | None = None, actor: int = BOT_ID) -> tuple:
+    """返回 (ui_state, 已执行的群操作说明列表)。群操作只对群会话生效。"""
+    st = ui_state()
+    notes = []
+    for a in actions or []:
+        t = a.get("type")
+        p = a.get("payload") or a
+        try:
+            if t == "theme.apply":
+                tid = p.get("theme_id")
+                all_themes = THEMES + get_setting("custom_themes", [])
+                if any(x["id"] == tid for x in all_themes):
+                    st["theme"] = tid
+            elif t == "theme.from_image":
+                fid = p.get("file_id")
+                row = _file_row(fid) if fid else None
+                if row and row["kind"] == "image":
+                    theme = palette_from_image(pathlib.Path(row["path"]))
+                    theme["id"] = "theme_img_" + fid[-6:]
+                    theme["name"] = "取自图片"
+                    themes = [x for x in get_setting("custom_themes", []) if x["id"] != theme["id"]]
+                    themes.append(theme)
+                    set_setting("custom_themes", themes)
+                    st["theme"] = theme["id"]
+            elif t == "bg.set":
+                if conv and str(conv).startswith("g") and not (is_admin(actor) or actor == BOT_ID):
+                    notes.append("只有管理员可以更换群背景")
+                    continue
+                if conv and str(conv).startswith("g"):
+                    set_conv_bg(conv, p)
+                    notes.append("群背景已更新")
+                    continue
+                if "brightness" in p:
+                    st["bg"]["brightness"] = max(0.2, min(1.3, float(p["brightness"])))
+                if "overlay" in p:
+                    st["bg"]["overlay"] = max(0, min(0.9, float(p["overlay"])))
+                if "blur" in p:
+                    st["bg"]["blur"] = max(0, min(24, int(p["blur"])))
+                if p.get("url"):
+                    st["bg"]["url"] = p["url"]
+            elif t == "bg.random":
+                if conv and str(conv).startswith("g") and not (is_admin(actor) or actor == BOT_ID):
+                    notes.append("只有管理员可以更换群背景")
+                    continue
+                wp = WALLPAPERS[_wp["i"] % len(WALLPAPERS)]
+                _wp["i"] += 1
+                if conv and str(conv).startswith("g"):
+                    set_conv_bg(conv, {"url": "", "gradient": wp})
+                    notes.append("群背景已更新")
+                    continue
+                st["bg"]["url"] = ""
+                st["bg"]["gradient"] = wp
+            elif t == "avatar.set":
+                if p.get("url"):
+                    st["avatar"]["url"] = p["url"]
+                if p.get("shape") in ("circle", "square"):
+                    st["avatar"]["shape"] = p["shape"]
+                if "size" in p:
+                    st["avatar"]["size"] = max(28, min(64, int(p["size"])))
+                if "removeBg" in p:
+                    st["avatar"]["removeBg"] = bool(p["removeBg"])
+                if p.get("borderColor"):
+                    st["avatar"]["borderColor"] = p["borderColor"]
+                if "border" in p:
+                    st["avatar"]["border"] = max(0, min(6, int(p["border"])))
+            elif t == "font.set":
+                if "size" in p:
+                    st["font"]["size"] = max(13, min(20, int(p["size"])))
+            elif t == "bubble.set":
+                if "radius" in p:
+                    st["bubble"]["radius"] = max(4, min(24, int(p["radius"])))
+                if "opacity" in p:
+                    st["bubble"]["opacity"] = max(0.35, min(1.0, float(p["opacity"])))
+            # ---- 群管理（服务端真正落库，不再只改前端）
+            elif t == "chat.create":
+                # 群主固定为 AI，发起人作为成员加入；创建只能走服务端 AI 通路
+                g = create_group(p.get("name") or "AI 建的群", BOT_ID, members=[actor])
+                notes.append(f"已建群「{g['name']}」，邀请码 {g['invite']}，你已在群里")
+            elif t == "chat.join":
+                try:
+                    if p.get("invite"):
+                        join_group(p["invite"], actor)
+                        notes.append("已加入群聊")
+                except HTTPException:
+                    notes.append("邀请码无效")
+            elif t == "chat.rename":
+                cid = p.get("conv_id") or conv
+                if cid and (cid.startswith("g")):
+                    rename_conv(cid, p.get("name") or "")
+                    notes.append(f"群名已改为「{p.get('name')}」")
+            elif t in ("chat.kick", "chat.remove_member"):
+                cid = p.get("conv_id") or conv
+                if cid and p.get("uid"):
+                    remove_member(cid, int(p["uid"]))
+                    notes.append(f"已移出 {uid_name(int(p['uid']))}")
+            elif t == "chat.add_member":
+                cid = p.get("conv_id") or conv
+                if cid and p.get("uid"):
+                    add_member(cid, int(p["uid"]))
+                    notes.append(f"已拉入 {uid_name(int(p['uid']))}")
+            elif t == "chat.mute":
+                cid = p.get("conv_id") or conv
+                if cid:
+                    mute_conv(cid, int(p.get("minutes") or 0))
+                    notes.append(f"已禁言 {p.get('minutes')} 分钟")
+            elif t == "chat.announce":
+                cid = p.get("conv_id") or conv
+                if cid:
+                    announce(cid, p.get("text") or "")
+                    notes.append("公告已更新")
+            elif t == "chat.pin":
+                cid = p.get("conv_id") or conv
+                if cid:
+                    pin_message(cid, p.get("message_id") or "")
+                    notes.append("已置顶消息")
+        except Exception as exc:
+            log(f"动作失败 {t}: {type(exc).__name__}")
+    set_setting("ui", st)
+    return st, notes
+
+
+# ---------------------------------------------------------------- 文件
+def _file_row(fid: str):
+    conn = db()
+    row = conn.execute("SELECT * FROM file WHERE id=?", (fid,)).fetchone()
+    conn.close()
+    return row
+
+
+def file_meta(row) -> dict:
+    return {"file_id": row["id"], "name": row["name"], "mime": row["mime"], "kind": row["kind"],
+            "size": row["size"], "url": f"/api/files/{row['id']}", "media": f"/media/{row['id']}",
+            "text_len": row["text_len"], "note": row["note"] or ""}
+
+
+# ---------------------------------------------------------------- 适配层
+LAST_HOST = {"v": ""}
+
+
+def remember_host(request) -> None:
+    """App 从哪个地址连进来，就把这个地址当作对外地址（公网 IP:端口）。"""
+    try:
+        host = request.headers.get("host", "")
+        if host:
+            scheme = request.headers.get("x-forwarded-proto") or (
+                "https" if request.url.scheme == "https" else "http")
+            LAST_HOST["v"] = f"{scheme}://{host}"
+    except Exception:
+        pass
+
+
+def local_ip() -> str:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.settimeout(0.6)
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def net_info() -> dict:
+    public = PUBLIC_BASE or LAST_HOST["v"] or f"http://{local_ip()}:{os.getenv('PORT', '8099')}"
+    return {"base": public, "lan_ip": local_ip(), "port": int(os.getenv("PORT", "8099")),
+            "mode": AGENT_MODE, "token_required": bool(GATEWAY_TOKEN)}
+
+
+class AgentLink:
+    """统一出口：onebot 走反向 WS，openai 直连兼容接口，webhook 打自建 agent。"""
+
+    def __init__(self):
+        self.ws = None
+        self.online = False
+        self.self_id = BOT_ID
+
+    async def start(self):
+        if AGENT_MODE == "onebot":
+            asyncio.create_task(self._onebot_loop())
+        else:
+            self.online = True
+            log(f"适配模式 {AGENT_MODE}，就绪")
+
+    # ---------- OneBot ----------
+    async def _onebot_loop(self):
+        while True:
+            # OneBot v11 反向 WS 握手必须带这两个头，AstrBot 会校验
+            headers = {"X-Self-ID": str(self.self_id), "X-Client-Role": "Universal"}
+            if ASTRBOT_TOKEN:
+                headers["Authorization"] = f"Bearer {ASTRBOT_TOKEN}"
+            try:
+                async with websockets.connect(ASTRBOT_WS, additional_headers=headers, ping_interval=15) as ws:
+                    self.ws = ws
+                    self.online = True
+                    log("已连接 AstrBot：" + ASTRBOT_WS)
+                    await self._send({"post_type": "meta_event", "meta_event_type": "lifecycle",
+                                      "sub_type": "connect", "time": int(time.time()),
+                                      "self_id": self.self_id})
+                    await self._onebot_read(ws)
+            except Exception as exc:
+                if self.online:
+                    log("与 AstrBot 断开：" + type(exc).__name__)
+                self.online = False
+                self.ws = None
+            await asyncio.sleep(3)
+
+    async def _onebot_read(self, ws):
+        while True:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=15)
+            except asyncio.TimeoutError:
+                await self._send({"post_type": "meta_event", "meta_event_type": "heartbeat",
+                                  "time": int(time.time()), "self_id": self.self_id,
+                                  "status": {"online": True, "good": True}, "interval": 15000})
+                continue
+            await self._onebot_action(json.loads(raw))
+
+    async def _send(self, payload):
+        if self.ws is None:
+            return
+        try:
+            await self.ws.send(json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            self.online = False
+            self.ws = None
+
+    async def _onebot_action(self, payload):
+        action = payload.get("action")
+        params = payload.get("params") or {}
+        echo = payload.get("echo")
+        ok = {"status": "ok", "retcode": 0, "data": {}, "echo": echo}
+
+        if action in ("send_msg", "send_private_msg", "send_group_msg"):
+            gid = params.get("group_id")
+            uid = params.get("user_id") or 1001
+            conv = (conv_by_num(int(gid)) or f"g{gid}") if gid else f"u{uid}"
+            msg = params.get("message")
+            if isinstance(msg, str):
+                msg = [{"type": "text", "data": {"text": msg}}]
+            text, images = parse_chain(msg or [])
+            images = [x for x in (materialize_image(i) for i in images) if x]
+            actions = extract_actions(text)
+            clean = strip_actions(text)
+            notes = []
+            if actions:
+                st, notes = apply_actions(actions, conv, BOT_ID)
+                await broadcast_all({"t": "ui_update", "settings": st, "actions": actions,
+                                     "themes": THEMES + get_setting("custom_themes", [])})
+            saved = add_message(conv, "bot", "bot", "bot",
+                                {"text": clean, "images": images, "attachments": [], "actions": actions})
+            await broadcast(conv, {"t": "msg_push", **saved})
+            for n in notes:
+                sysmsg = add_message(conv, "system", "sys", "sys", {"text": n})
+                await broadcast(conv, {"t": "msg_push", **sysmsg})
+            ok["data"] = {"message_id": saved["seq"]}
+        elif action == "get_login_info":
+            ok["data"] = {"user_id": self.self_id, "nickname": BOT_NAME}
+        elif action == "get_version_info":
+            ok["data"] = {"app_name": "ai-chat-gateway", "app_version": "0.3.0", "protocol_version": "v11"}
+        elif action == "get_status":
+            ok["data"] = {"online": True, "good": True}
+        elif action in ("can_send_image", "can_send_record"):
+            ok["data"] = {"yes": True}
+        elif action == "get_group_member_info":
+            gid2 = int(params.get("group_id") or 0)
+            uid2 = int(params.get("user_id") or 0)
+            conv2 = conv_by_num(gid2) or ""
+            nick2 = "群成员"
+            conn = db()
+            row2 = conn.execute("SELECT name FROM device WHERE uid=? ORDER BY rowid DESC LIMIT 1", (uid2,)).fetchone()
+            if row2 and row2["name"]:
+                nick2 = row2["name"]
+            elif uid2 == BOT_ID:
+                nick2 = BOT_NAME
+            ok["data"] = {"user_id": uid2, "nickname": nick2, "card": nick2,
+                          "role": "owner" if conv2 and conv_row(conv2) and conv_row(conv2)["owner"] == uid2 else "member"}
+        elif action in ("get_group_list", "get_group_info"):
+            items = []
+            conn = db()
+            for r in conn.execute("SELECT id, name, num FROM conv WHERE id LIKE 'g%'").fetchall():
+                items.append({"group_id": int(r["num"] or group_num(r["id"])), "group_name": r["name"], "member_count": len(members_of(r["id"]))})
+            ok["data"] = items if action == "get_group_list" else (items[0] if items else {})
+        elif action == "get_friend_list":
+            ok["data"] = []
+        elif action == "get_msg":
+            ok["data"] = {"message_id": 0}
+        elif action == "delete_msg":
+            ok["data"] = None
+        else:
+            ok["status"] = "failed"
+            ok["retcode"] = 1404
+            log("未实现接口：" + str(action))
+        await self._send(ok)
+
+    async def push(self, conv: str, user_id: int, name: str, segments: list, seq: int, group: bool):
+        # 私聊的投递地址跟会话一致（u1001），sender 里保留真实 device uid
+        target = user_id
+        if not group and conv[1:].isdigit():
+            target = int(conv[1:])
+        event = {"post_type": "message", "message_type": "group" if group else "private",
+                 "sub_type": "normal" if group else "friend", "message_id": seq,
+                 "user_id": target, "self_id": self.self_id, "time": int(time.time()),
+                 "target": target,
+                 "sender": {"user_id": user_id, "nickname": name, "role": "member"},
+                 "message": segments,
+                 "raw_message": "".join(s.get("data", {}).get("text", "") for s in segments
+                                        if s.get("type") == "text")}
+        if group:
+            row = conv_row(conv)
+            event["group_id"] = int(row["num"] or group_num(conv)) if row else group_num(conv)
+            # 群里 AstrBot 默认要 @ 才回应，这里自动补一个 @机器人 消息段
+            if not any(x.get("type") == "at" for x in segments):
+                event["message"] = [{"type": "at", "data": {"qq": str(self.self_id)}}] + event["message"]
+        await self._send(event)
+
+    # ---------- 兼容 /chat/completions ----------
+    async def _openai_reply(self, text: str) -> dict:
+        import urllib.request
+        body = json.dumps({"model": OPENAI_MODEL, "messages": [
+            {"role": "system", "content": "你是聊天应用里的 AI，需要改界面时输出 <ui>{\"actions\":[...]}</ui>。"},
+            {"role": "user", "content": text}]}).encode()
+        req = urllib.request.Request(OPENAI_BASE.rstrip("/") + "/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json",
+                                              "Authorization": f"Bearer {OPENAI_KEY}"})
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=60).read())
+        return {"text": json.loads(res)["choices"][0]["message"]["content"], "actions": []}
+
+    async def _webhook_reply(self, conv: str, text: str, meta: dict) -> dict:
+        import urllib.request
+        body = json.dumps({"conv": conv, "text": text, "meta": meta}).encode()
+        req = urllib.request.Request(AGENT_WEBHOOK, data=body, headers={"Content-Type": "application/json"})
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=60).read())
+        data = json.loads(res)
+        if isinstance(data, str):
+            return {"text": data, "actions": []}
+        return {"text": data.get("text", ""), "actions": data.get("actions") or []}
+
+    async def direct_reply(self, conv: str, text: str, meta: dict) -> dict:
+        if AGENT_MODE == "openai":
+            return await self._openai_reply(text)
+        if AGENT_MODE == "webhook":
+            return await self._webhook_reply(conv, text, meta)
+        return {"text": "", "actions": []}
+
+
+bot = AgentLink()
+
+
+def materialize_image(ref: str) -> str:
+    """AstrBot 常发 base64:// 或 file:// 的图片，转成本地 /media/<fid>，否则客户端显示不出来。"""
+    ref = (ref or "").strip()
+    if not ref:
+        return ref
+    try:
+        if ref.startswith("base64://"):
+            b64 = ref[len("base64://"):]
+            raw = base64.b64decode(b64 + "=" * (-len(b64) % 4))
+            ext = ".gif" if raw[:6] in (b"GIF87a", b"GIF89a") else ".png" if raw[:8].startswith(b"\x89PNG") else ".jpg"
+            fid = "f-" + uuid.uuid4().hex[:12]
+            target = UPLOADS / (fid + ext)
+            target.write_bytes(raw)
+            kind, mime = "image", {"gif": "image/gif", "png": "image/png", "jpg": "image/jpeg"}[ext[1:]]
+            conn = db()
+            conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                         (fid, "sticker" + ext, mime, kind, len(raw), str(target), 0, "", int(time.time() * 1000)))
+            conn.commit(); conn.close()
+            return f"/media/{fid}"
+        if ref.startswith("file://"):
+            src = pathlib.Path(urllib.parse.unquote(ref[len("file://"):]))
+            if src.exists():
+                ext = src.suffix.lower()[:6] or ".jpg"
+                fid = "f-" + uuid.uuid4().hex[:12]
+                target = UPLOADS / (fid + ext)
+                target.write_bytes(src.read_bytes())
+                mime = "image/gif" if ext == ".gif" else f"image/{ext[1:] if ext[1:] != 'jpg' else 'jpeg'}"
+                conn = db()
+                conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                             (fid, src.name, mime, "image", target.stat().st_size, str(target), 0, "", int(time.time() * 1000)))
+                conn.commit(); conn.close()
+                return f"/media/{fid}"
+        return ref
+    except Exception as exc:
+        log("图片转存失败：" + type(exc).__name__)
+        return ""
+
+
+def parse_chain(chain: list):
+    texts, images = [], []
+    for seg in chain:
+        t = seg.get("type")
+        d = seg.get("data") or {}
+        if t == "text":
+            texts.append(d.get("text", ""))
+        elif t == "image":
+            images.append(d.get("url") or d.get("file", ""))
+        elif t == "record":
+            texts.append("[语音]")
+    return "".join(texts).strip(), images
+
+
+def extract_actions(text: str) -> list:
+    m = re.search(r"<ui>(.*?)</ui>", text or "", re.S)
+    if not m:
+        m = re.search(r"```ui\s*(.*?)```", text or "", re.S)
+    if not m:
+        return []
+    try:
+        obj = json.loads(m.group(1).strip())
+    except Exception:
+        return []
+    if isinstance(obj, list):
+        return obj
+    return obj.get("actions", [])
+
+
+def strip_actions(text: str) -> str:
+    text = re.sub(r"<ui>.*?</ui>", "", text or "", flags=re.S)
+    text = re.sub(r"```ui\s*.*?```", "", text, flags=re.S)
+    return text.strip()
+
+
+# ---------------------------------------------------------------- 连接池
+clients: dict[str, set] = {}
+
+
+async def broadcast(conv: str, payload: dict) -> None:
+    for ws in list(clients.get(conv, set())):
+        try:
+            await ws.send_text(json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            clients.get(conv, set()).discard(ws)
+
+
+async def broadcast_conv_update() -> None:
+    """会话列表按接收者身份裁剪后再下发，避免把别人的私聊（多个“AI 助手”）广播出去。"""
+    seen = set()
+    for wss in list(clients.values()):
+        for ws in list(wss):
+            if id(ws) in seen:
+                continue
+            seen.add(id(ws))
+            try:
+                await ws.send_text(json.dumps({"t": "conv_update",
+                                               "items": conv_list(getattr(ws, "uid", 0))},
+                                              ensure_ascii=False))
+            except Exception:
+                wss.discard(ws)
+
+
+async def broadcast_all(payload: dict) -> None:
+    for wss in list(clients.values()):
+        for ws in list(wss):
+            try:
+                await ws.send_text(json.dumps(payload, ensure_ascii=False))
+            except Exception:
+                wss.discard(ws)
+
+
+# ---------------------------------------------------------------- 路由
+@app.on_event("startup")
+async def startup():
+    init_db()
+    resolve_admin_codes()
+    try:
+        load_plugins()
+    except Exception as e:
+        log(f"插件加载跳过: {e}")
+    try:
+        purge_deleted()
+    except Exception:
+        pass
+    # 默认改为白色界面：历史深色默认一次性迁移，用户自己选的其它主题不动
+    try:
+        st0 = ui_state()
+        if st0.get("theme") == "dark_ink" and not get_setting("theme_light_migrated", False):
+            st0["theme"] = "light_clean"
+            set_setting("ui", st0)
+            set_setting("theme_light_migrated", True)
+            log("默认主题已切换为浅色")
+    except Exception:
+        pass
+    await bot.start()
+    info = net_info()
+    log(f"网关就绪 base={info['base']} mode={info['mode']} token={info['token_required']}")
+
+
+@app.get("/")
+async def index(join: str = ""):
+    return FileResponse(STATIC / "app.html")
+
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    info = net_info()
+    return JSONResponse({
+        "name": "AI Chat 网关",
+        "short_name": "AI Chat",
+        "description": "自建 AI 聊天与群聊，网关直连 AstrBot",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#121417",
+        "theme_color": "#121417",
+        "orientation": "portrait",
+        "icons": [
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+    })
+
+
+@app.get("/sw.js")
+async def sw():
+    return FileResponse(STATIC / "sw.js", media_type="application/javascript")
+
+
+@app.get("/icon-192.png")
+async def icon192():
+    return FileResponse(STATIC / "icon-192.png", media_type="image/png")
+
+
+@app.get("/icon-512.png")
+async def icon512():
+    return FileResponse(STATIC / "icon-512.png", media_type="image/png")
+
+
+@app.get("/api/net")
+async def api_net(request: Request):
+    remember_host(request)
+    info = net_info()
+    return info
+
+
+def require_device(device: str) -> int:
+    if not device:
+        raise HTTPException(403, "缺少设备标识")
+    conn = db()
+    row = conn.execute("SELECT uid FROM device WHERE device_id=?", (device,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(403, "设备未注册")
+    return int(row["uid"])
+
+
+def _read_version() -> str:
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")) as f:
+            return f.read().strip() or "0.1"
+    except Exception:
+        return "0.1"
+
+
+APP_VERSION = os.getenv("APP_VERSION") or _read_version()
+
+
+@app.get("/api/apk")
+async def api_apk():
+    """固定下载地址，避免 CDN 临时链接过期导致更新失败。"""
+    p = STATIC / "AI-Chat.apk"
+    if not p.exists():
+        raise HTTPException(404, "APK 未上传")
+    return FileResponse(p, media_type="application/vnd.android.package-archive", filename="AI-Chat.apk")
+
+
+@app.get("/api/version")
+async def api_version():
+    return {"version": get_setting("app_version", APP_VERSION),
+            "apk_url": get_setting("apk_url", ""),
+            "notes": get_setting("apk_notes", ""),
+            "pushed_at": get_setting("apk_pushed_at", 0)}
+
+
+
+@app.post("/api/admin/ai_visibility")
+async def admin_ai_visibility(request: Request):
+    body = await request.json()
+    require_admin("g1001", body.get("device", ""))
+    cur = get_setting("sys", {})
+    cur["show_ai_all"] = bool(body.get("value", True))
+    set_setting("sys", cur)
+    await broadcast_conv_update()
+    return {"ok": True, "show_ai_all": cur["show_ai_all"]}
+
+
+@app.post("/api/admin/push_update")
+async def api_push_update(request: Request):
+    body = await request.json()
+    require_admin("g1001", body.get("device", ""))
+    ver = str(body.get("version") or "").strip()
+    if not ver:
+        raise HTTPException(400, "缺少版本号")
+    set_setting("apk_url", body.get("apk_url", ""))
+    set_setting("apk_notes", body.get("notes", ""))
+    set_setting("apk_pushed_at", int(time.time()))
+    global APP_VERSION
+    APP_VERSION = ver
+    set_setting("app_version", ver)
+    payload = {"t": "app_update", "version": ver, "apk_url": body.get("apk_url", ""),
+               "notes": body.get("notes", "")}
+    await broadcast_all(payload)
+    return {"ok": True, **payload}
+
+
+@app.get("/api/read")
+async def api_read(device: str = ""):
+    uid = require_device(device)
+    data = get_setting("read_seq", {}) or {}
+    return {"reads": data.get(str(uid), {})}
+
+
+@app.post("/api/read")
+async def api_read_set(request: Request):
+    body = await request.json()
+    uid = require_device(body.get("device", ""))
+    conv = str(body.get("conv") or "")
+    seq = int(body.get("seq") or 0)
+    if not conv:
+        raise HTTPException(400, "缺少会话")
+    data = get_setting("read_seq", {}) or {}
+    per = data.get(str(uid), {})
+    if seq > int(per.get(conv, 0)):
+        per[conv] = seq
+        data[str(uid)] = per
+        set_setting("read_seq", data)
+    return {"ok": True}
+
+
+@app.post("/api/admin/grant")
+async def api_grant(request: Request):
+    body = await request.json()
+    require_admin("g1001", body.get("device", ""))
+    uid = int(body.get("uid") or 0)
+    if not uid:
+        raise HTTPException(400, "缺少 uid")
+    lst = [int(x) for x in (get_setting("admin_uids", []) or [])]
+    if uid not in lst:
+        lst.append(uid); set_setting("admin_uids", lst)
+    await broadcast_conv_update()
+    return {"ok": True, "admin_uids": lst}
+
+
+@app.post("/api/admin/revoke")
+async def api_revoke(request: Request):
+    """撤销由 AI/管理员授予的管理员（BOT_ID 与 ADMIN_CODES 初始管理员不可撤销）。"""
+    body = await request.json()
+    require_admin("g1001", body.get("device", ""))
+    uid = int(body.get("uid") or 0)
+    if not uid:
+        raise HTTPException(400, "缺少 uid")
+    if uid == BOT_ID:
+        raise HTTPException(400, "不能撤销服务器 AI")
+    lst = [int(x) for x in (get_setting("admin_uids", []) or [])]
+    if uid in lst:
+        lst.remove(uid)
+        set_setting("admin_uids", lst)
+    await broadcast_conv_update()
+    return {"ok": True, "admin_uids": lst}
+
+
+@app.get("/api/health")
+async def health():
+    ok_db = True
+    try:
+        conn = db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+    except Exception:
+        ok_db = False
+    return {"ok": ok_db and bot.online, "db": ok_db, "agent": bot.online,
+            "mode": AGENT_MODE, "time": int(time.time())}
+
+
+@app.get("/api/status")
+async def status():
+    return {"agent": bot.online, "mode": AGENT_MODE, "settings": ui_state(),
+            "themes": THEMES + get_setting("custom_themes", []), "net": net_info()}
+
+
+@app.post("/api/device")
+async def api_device(request: Request):
+    body = await request.json()
+    prof = device_profile(body.get("device_id", ""), body.get("name", ""), body.get("kind", "user"))
+    return prof
+
+
+@app.get("/api/settings")
+async def get_settings():
+    return {"settings": ui_state(), "themes": THEMES + get_setting("custom_themes", [])}
+
+
+@app.put("/api/settings")
+async def put_settings(request: Request, device: str = ""):
+    body = await request.json()
+    st = ui_state()
+
+    def merge(dst, src):
+        for k, v in src.items():
+            if isinstance(v, dict) and isinstance(dst.get(k), dict):
+                merge(dst[k], v)
+            else:
+                dst[k] = v
+
+    # AI 头像属于全站身份，只有管理员能改；普通用户的改动被忽略
+    avatar_ignored = False
+    incoming_avatar = (body.get("avatar") or {})
+    if incoming_avatar and "me" in incoming_avatar:
+        # avatar.me 是个人的头像，存在各自 device 记录里，不能写进全站设置
+        incoming_avatar = dict(incoming_avatar)
+        incoming_avatar.pop("me", None)
+        body = dict(body)
+        body["avatar"] = incoming_avatar
+    if incoming_avatar and "url" in incoming_avatar:
+        uid = uid_by_device(device) if device else None
+        if not (uid and is_admin(int(uid))) and incoming_avatar["url"] != (st.get("avatar") or {}).get("url"):
+            incoming_avatar = dict(incoming_avatar)
+            incoming_avatar.pop("url", None)
+            body = dict(body)
+            body["avatar"] = incoming_avatar
+            avatar_ignored = True
+    merge(st, body)
+    st["avatar"]["size"] = max(28, min(64, int(st["avatar"]["size"])))
+    st["avatar"]["shape"] = st["avatar"]["shape"] if st["avatar"]["shape"] in ("circle", "square") else "circle"
+    st["bg"]["brightness"] = max(0.2, min(1.3, float(st["bg"]["brightness"])))
+    st["bg"]["overlay"] = max(0, min(0.9, float(st["bg"]["overlay"])))
+    st["bg"]["blur"] = max(0, min(24, int(st["bg"]["blur"])))
+    st["font"]["size"] = max(13, min(20, int(st["font"]["size"])))
+    if json.dumps(st, sort_keys=True, ensure_ascii=False) == json.dumps(ui_state(), sort_keys=True, ensure_ascii=False):
+        return {"ok": True, "settings": st, "unchanged": True, "avatar_ignored": avatar_ignored}
+    set_setting("ui", st)
+    await broadcast_all({"t": "ui_update", "settings": st,
+                         "themes": THEMES + get_setting("custom_themes", [])})
+    return {"ok": True, "settings": st}
+
+
+@app.post("/api/themes")
+async def save_theme(request: Request):
+    body = await request.json()
+    theme = {"id": "custom_" + uuid.uuid4().hex[:6], "name": (body.get("name") or "我的主题")[:20],
+             "v": body.get("v") or {}}
+    themes = get_setting("custom_themes", [])
+    themes.append(theme)
+    set_setting("custom_themes", themes)
+    st = ui_state()
+    st["theme"] = theme["id"]
+    set_setting("ui", st)
+    await broadcast_all({"t": "ui_update", "settings": st, "themes": THEMES + themes})
+    return {"ok": True, "theme": theme}
+
+
+@app.delete("/api/themes/{tid}")
+async def del_theme(tid: str):
+    themes = [x for x in get_setting("custom_themes", []) if x["id"] != tid]
+    set_setting("custom_themes", themes)
+    st = ui_state()
+    if st["theme"] == tid:
+        st["theme"] = "dark_ink"
+        set_setting("ui", st)
+    await broadcast_all({"t": "ui_update", "settings": st, "themes": THEMES + themes})
+    return {"ok": True}
+
+
+@app.get("/api/convs")
+async def get_convs(request: Request, device: str = ""):
+    remember_host(request)
+    uid = device_profile(device)["uid"] if device else 0
+    if uid:
+        ensure_private(uid)
+    return {"items": conv_list(uid), "net": net_info()}
+
+
+@app.post("/api/convs")
+async def create_conv(request: Request):
+    """建群只允许 AI 在服务器内部完成；前端/外部接口一律拒绝。"""
+    raise HTTPException(403, "群聊只能由 AI 创建：请在聊天里对我说「建个群叫XXX」")
+
+
+@app.post("/api/convs/join")
+async def join_conv(request: Request):
+    body = await request.json()
+    prof = device_profile(body.get("device", ""), body.get("nick", ""))
+    g = join_group(body.get("invite", ""), prof["uid"])
+    await broadcast_conv_update()
+    return {"ok": True, **g}
+
+
+def require_admin(cid: str, device: str) -> int:
+    """群管理动作：只有服务器 AI、管理员、群主能做。"""
+    if device in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
+        return BOT_ID
+    uid = uid_by_device(device)
+    if uid is None:
+        raise HTTPException(403, "需要 device 参数")
+    if is_admin(uid):
+        return uid
+    # 群创建者：群内没有其他人类管理员时，可以改群名/群头像
+    row = conv_row(cid) if cid else None
+    if row and row["type"] == "group" and int(row["owner"] or 0) == uid:
+        others = [m for m in json.loads(row["members"] or "[]") if int(m) != uid and int(m) != BOT_ID]
+        if not any(is_admin(int(m)) for m in others):
+            return uid
+    raise HTTPException(403, "只有管理员或群创建者能改群共用内容")
+
+
+@app.patch("/api/convs/{cid}")
+async def patch_conv(cid: str, request: Request, device: str = ""):
+    body = await request.json()
+    require_admin(cid, device or body.get("device", ""))
+    if "name" in body:
+        rename_conv(cid, (body["name"] or "")[:24])
+    if "avatar" in body:
+        conn = db()
+        conn.execute("UPDATE conv SET avatar=? WHERE id=?", (body["avatar"], cid))
+        conn.commit()
+        conn.close()
+    if "announce" in body:
+        announce(cid, body["announce"] or "")
+    if "mute" in body:
+        mute_conv(cid, int(body["mute"] or 0))
+    if "mute_minutes" in body:
+        mute_minutes(cid, int(body["mute_minutes"] or 0))
+    if "at_only" in body:
+        conn = db()
+        conn.execute("UPDATE conv SET at_only=? WHERE id=?", (1 if body["at_only"] else 0, cid))
+        conn.commit(); conn.close()
+    await broadcast_conv_update()
+    return {"ok": True}
+
+
+@app.delete("/api/convs/{cid}")
+async def delete_conv(cid: str, device: str = ""):
+    require_admin(cid, device)
+    conn = db()
+    conn.execute("UPDATE conv SET deleted_at=? WHERE id=?", (int(time.time()), cid))
+    conn.commit()
+    conn.close()
+    await broadcast_conv_update()
+    return {"ok": True, "deleted": True, "restore_days": 7}
+
+
+@app.get("/api/convs/deleted")
+async def deleted_convs(device: str = ""):
+    require_admin("g1001", device)
+    conn = db()
+    cut = int(time.time()) - 7 * 86400
+    rows = conn.execute("SELECT id,type,name,deleted_at FROM conv WHERE deleted_at>? ORDER BY deleted_at DESC",
+                        (cut,)).fetchall()
+    conn.close()
+    return {"items": [{"id": r["id"], "type": r["type"], "name": r["name"], "deleted_at": r["deleted_at"]} for r in rows]}
+
+
+@app.post("/api/convs/{cid}/restore")
+async def restore_conv(cid: str, request: Request):
+    body = await request.json()
+    require_admin(cid, body.get("device", ""))
+    conn = db()
+    conn.execute("UPDATE conv SET deleted_at=0 WHERE id=?", (cid,))
+    conn.commit(); conn.close()
+    await broadcast_conv_update()
+    return {"ok": True}
+
+
+@app.post("/api/dm")
+async def api_dm(request: Request):
+    body = await request.json()
+    device = body.get("device", "")
+    me = device_profile(device).get("uid")
+    target = int(body.get("target") or 0)
+    if not target:
+        raise HTTPException(400, "缺少目标")
+    if target == BOT_ID:
+        ensure_private(int(me))
+        return {"ok": True, "conv": {"id": f"u{me}", "type": "private", "name": BOT_NAME,
+                                     "avatar": "", "members": [int(me), BOT_ID], "last_seq": 0}}
+    a, b = sorted([int(me), target])
+    cid = f"d{a}-{b}"
+    conn = db()
+    row = conn.execute("SELECT * FROM conv WHERE id=?", (cid,)).fetchone()
+    if row is None:
+        conn.execute("INSERT INTO conv (id,type,name,avatar,members,created_at,invite,owner) VALUES (?,?,?,?,?,?,?,?)",
+                     (cid, "dm", "", "", json.dumps([a, b]), int(time.time()), "", 0))
+        conn.commit()
+    conn.close()
+    return {"ok": True, "conv": {"id": cid, "type": "dm", "name": uid_name(target),
+                                 "avatar": "", "members": [a, b], "last_seq": 0}}
+
+
+@app.delete("/api/messages/{cid}/{seq}")
+async def api_delete_message(cid: str, seq: int, device: str = ""):
+    require_member(cid, device)
+    conn = db()
+    conn.execute("DELETE FROM message WHERE conv=? AND seq=?", (cid, seq))
+    conn.commit()
+    conn.close()
+    await broadcast(cid, {"t": "msg_del", "conv": cid, "seq": seq})
+    return {"ok": True}
+
+
+
+@app.post("/api/convs/{cid}/bg")
+async def api_conv_bg(cid: str, request: Request):
+    body = await request.json()
+    uid = uid_by_device(body.get("device", ""))
+    if uid is None or not is_admin(uid):
+        raise HTTPException(403, "只有管理员可以更换群背景")
+    bg = set_conv_bg(cid, body)
+    await broadcast(cid, {"t": "conv_bg", "conv": cid, "bg": bg})
+    await broadcast_conv_update()
+    return {"ok": True, "bg": bg}
+
+
+
+@app.get("/api/push/poll")
+async def push_poll(device: str = "", since: int = 0):
+    """给终端做后台消息轮询：只返回该设备用户所在会话里、别人发的新消息。"""
+    uid = require_device(device)
+    conn = db()
+    rows = conn.execute("SELECT * FROM conv WHERE deleted_at=0").fetchall()
+    convs = {}
+    for r in rows:
+        try:
+            members = [int(x) for x in json.loads(r["members"] or "[]")]
+        except Exception:
+            members = []
+        if r["type"] == "private":
+            if r["id"] != f"u{uid}":
+                continue
+        elif r["type"] == "dm":
+            if uid not in members or BOT_ID in members:
+                continue
+        elif r["type"] == "group":
+            if uid not in members and r["id"] != "g1001":
+                continue
+        convs[r["id"]] = r
+    items = []
+    mx = since
+    for cid, r in convs.items():
+        msgs = conn.execute("SELECT * FROM message WHERE conv=? AND ts>? ORDER BY ts LIMIT 40", (cid, since)).fetchall()
+        for m in msgs:
+            mx = max(mx, int(m["ts"] or 0))
+            if str(m["sender"]) == str(uid) or m["role"] == "user" and str(m["sender"]) == str(uid):
+                continue
+            try:
+                c = json.loads(m["content"] or "{}")
+            except Exception:
+                c = {}
+            text = (c.get("text") or "").strip()
+            if not text:
+                text = "[图片]" if (c.get("images") or c.get("image")) else "[附件]"
+            items.append({"conv": cid,
+                          "conv_name": r["name"] or ("AI 助手" if r["type"] == "private" else "会话"),
+                          "from": uid_name(int(m["sender"])) if str(m["sender"]).isdigit() else "AI 助手",
+                          "text": text[:120], "ts": int(m["ts"] or 0), "seq": int(m["seq"] or 0)})
+    conn.close()
+    items.sort(key=lambda x: x["ts"])
+    return {"items": items[-20:], "max_ts": mx}
+
+
+@app.get("/api/convs/{cid}/members")
+async def get_members(cid: str):
+    ms = members_of(cid)
+    row = conv_row(cid)
+    owner = row["owner"] if row else 0
+    return {"items": [{"uid": m, "name": uid_name(m), "bot": m == BOT_ID,
+                       "admin": is_admin(m)} for m in ms],
+            "invite": row["invite"] if row else "", "owner": owner,
+            "mute_until": (row["mute_until"] if row else 0) or 0,
+            "announce": (row["announce"] if row else "") or "",
+            "pin": (row["pin"] if row else "") or "",
+            "at_only": (row["at_only"] if row else 0) or 0}
+
+
+@app.delete("/api/convs/{cid}/members/{uid}")
+async def kick_member(cid: str, uid: int, device: str = ""):
+    me = require_admin(cid, device)
+    if int(uid) == BOT_ID:
+        raise HTTPException(403, "不能移出服务器 AI")
+    remove_member(cid, uid)
+    await broadcast_conv_update()
+    return {"ok": True}
+
+
+@app.post("/api/convs/{cid}/leave")
+async def leave_conv(cid: str, request: Request):
+    body = await request.json()
+    me = device_profile(body.get("device", "")).get("uid")
+    if not me:
+        raise HTTPException(403, "缺少 device")
+    row = conv_row(cid)
+    if row is None:
+        raise HTTPException(404, "会话不存在")
+    if row["type"] == "private":
+        raise HTTPException(400, "私聊不能退出")
+    remove_member(cid, int(me))
+    await broadcast_conv_update()
+    return {"ok": True}
+
+
+@app.post("/api/admin/ban")
+async def api_ban(request: Request):
+    body = await request.json()
+    require_admin("g1001", body.get("device", ""))
+    uid = int(body.get("uid") or 0)
+    if not uid:
+        raise HTTPException(400, "缺少 uid")
+    lst = banned_uids()
+    if uid not in lst:
+        lst.append(uid); set_banned(lst)
+    # 从所有群里移除
+    conn = db()
+    for r in conn.execute("SELECT id, members FROM conv WHERE type IN ('group','dm')").fetchall():
+        try:
+            ms = [int(x) for x in json.loads(r["members"] or "[]")]
+        except Exception:
+            continue
+        if uid in ms:
+            conn.execute("UPDATE conv SET members=? WHERE id=?",
+                         (json.dumps([m for m in ms if m != uid]), r["id"]))
+    conn.commit(); conn.close()
+    await broadcast_conv_update()
+    return {"ok": True, "banned": lst}
+
+
+@app.get("/api/me")
+async def api_me(device: str = "", kind: str = "user"):
+    return device_profile(device, "", kind)
+
+
+@app.post("/api/restore")
+async def api_restore(request: Request):
+    """恢复码：把当前新设备绑到旧账号的 uid，数据、头像、昵称一起继承。"""
+    body = await request.json()
+    code = (body.get("code") or "").strip().upper()
+    if not code:
+        raise HTTPException(400, "缺少身份码")
+    conn = db()
+    old = conn.execute("SELECT device_id FROM ident WHERE code=?", (code,)).fetchone()
+    if old is None:
+        conn.close()
+        raise HTTPException(404, "身份码不存在")
+    old_dev = old["device_id"]
+    old_row = conn.execute("SELECT * FROM device WHERE device_id=?", (old_dev,)).fetchone()
+    if old_row is None:
+        conn.close()
+        raise HTTPException(404, "身份码没有对应设备")
+    new_dev = (body.get("device_id") or "").strip()[:64]
+    prof = device_profile(old_dev, "", "user")
+    if new_dev and new_dev != old_dev:
+        ex = conn.execute("SELECT * FROM device WHERE device_id=?", (new_dev,)).fetchone()
+        if ex:
+            conn.execute("UPDATE device SET uid=?, name=?, avatar=? WHERE device_id=?",
+                         (old_row["uid"], old_row["name"], old_row["avatar"] if "avatar" in old_row.keys() else "", new_dev))
+        else:
+            conn.execute("INSERT INTO device (device_id,uid,name,created_at,secret,avatar) VALUES (?,?,?,?,?,?)",
+                         (new_dev, old_row["uid"], old_row["name"], int(time.time()),
+                          ensure_secret(new_dev), old_row["avatar"] if "avatar" in old_row.keys() else ""))
+        conn.commit()
+        # 身份码是唯一的：换机后把它从旧设备迁到新设备
+        conn.execute("DELETE FROM ident WHERE device_id=? OR code=?", (new_dev, code))
+        conn.execute("INSERT INTO ident (device_id,code,kind,created_at) VALUES (?,?,?,?)",
+                     (new_dev, code, "user", int(time.time())))
+        conn.commit()
+        conn.close()
+        prof = device_profile(new_dev, "", "user")
+        prof["code"] = code
+    else:
+        conn.close()
+    conn = db()
+    conn.close()
+    return {"ok": True, **prof}
+
+
+@app.post("/api/profile")
+async def api_profile(request: Request):
+    body = await request.json()
+    device = (body.get("device") or "").strip()[:64]
+    if not device:
+        raise HTTPException(400, "缺少 device")
+    name = (body.get("name") or "").strip()[:16]
+    avatar = (body.get("avatar") or "").strip()[:400]
+    uid = uid_by_device(device)
+    conn = db()
+    row = conn.execute("SELECT * FROM device WHERE device_id=?", (device,)).fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "设备不存在")
+    if uid in banned_uids():
+        conn.close()
+        raise HTTPException(403, "该账号已被移出服务器")
+    if name:
+        conn.execute("UPDATE device SET name=? WHERE device_id=?", (name, device))
+    if "avatar" in row.keys() or True:
+        conn.execute("UPDATE device SET avatar=? WHERE device_id=?", (avatar, device))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "name": name or row["name"], "avatar": avatar}
+
+
+def uid_by_device(device_id: str) -> int | None:
+    if not device_id:
+        return None
+    conn = db()
+    row = conn.execute("SELECT uid FROM device WHERE device_id=?", (device_id,)).fetchone()
+    conn.close()
+    if row:
+        return int(row["uid"])
+    h = hashlib.sha1(device_id.encode()).hexdigest()
+    return 100000 + int(h[:7], 16) % 800000
+
+
+def require_member(conv: str, device: str):
+    """群会话必须带 device，且必须是成员；私聊按 uid 会话归属校验。"""
+    uid = uid_by_device(device)
+    if uid is None:
+        raise HTTPException(403, "需要 device 参数")
+    if conv.startswith("g"):
+        if uid not in members_of(conv):
+            raise HTTPException(403, "不是该群成员")
+    elif conv.startswith("u"):
+        try:
+            other = int(conv[1:])
+        except Exception:
+            return
+        if uid not in (other, BOT_ID) and other != BOT_ID:
+            raise HTTPException(403, "无权访问该会话")
+
+
+@app.get("/api/messages")
+async def api_messages(conv: str = "u1001", after: int = 0, limit: int = 100, device: str = ""):
+    require_member(conv, device)
+    if conv.startswith("g") and not conv_row(conv):
+        raise HTTPException(404, "会话不存在")
+    items = history(conv, min(limit, 300), after)
+    last = items[-1]["seq"] if items else after
+    return {"items": items, "last_seq": last}
+
+
+@app.get("/api/agent/poll")
+async def api_agent_poll(conv: str = "", after: int = 0, limit: int = 50, device: str = ""):
+    """给外部 agent 的轻量拉取：HTTP 轮询即可，无需 WebSocket。"""
+    if not conv or not device:
+        raise HTTPException(400, "需要 conv 和 device")
+    require_member(conv, device)
+    items = history(conv, min(max(limit, 1), 200), max(after, 0))
+    return {"items": items, "last_seq": items[-1]["seq"] if items else after}
+
+
+@app.post("/api/agent/send")
+async def api_agent_send(request: Request):
+    """外部 agent 用一条 HTTP 请求发消息；不需要实现 WebSocket 协议。"""
+    body = await request.json()
+    conv = (body.get("conv") or "").strip()
+    device = (body.get("device") or "").strip()
+    if not conv or not device:
+        raise HTTPException(400, "需要 conv 和 device")
+    require_member(conv, device)
+    uid = uid_by_device(device)
+    if uid in banned_uids():
+        raise HTTPException(403, "该账号已被移出服务器")
+    row = conv_row(conv)
+    if row and row["mute_until"] and int(row["mute_until"]) > int(time.time()) and not is_admin(uid):
+        raise HTTPException(403, "你已被禁言")
+    text = (body.get("text") or "").strip()[:4000]
+    if not text:
+        raise HTTPException(400, "text 不能为空")
+    content = {"text": text}
+    if body.get("reply_to"):
+        content["reply_to"] = int(body["reply_to"])
+    if body.get("mentions"):
+        content["mentions"] = [int(x) for x in body["mentions"]][:20]
+    msg = add_message(conv, str(uid), "agent", "text", content)
+    await broadcast(conv, {"t": "msg_push", **msg})
+    return {"ok": True, **msg}
+
+
+@app.get("/api/search")
+async def api_search(conv: str = "u1001", q: str = "", device: str = "", limit: int = 60):
+    require_member(conv, device)
+    q = (q or "").strip()
+    if not q:
+        return {"items": [], "total": 0}
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM message WHERE conv=? AND content LIKE ? ORDER BY seq DESC LIMIT ?",
+        (conv, "%" + q + "%", min(limit, 100))).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        c = json.loads(r["content"] or "{}")
+        items.append({"seq": r["seq"], "sender": r["sender"], "role": r["role"],
+                      "name": c.get("name") or (BOT_NAME if str(r["sender"]) == str(BOT_ID) else uid_name(str(r["sender"]))),
+                      "text": (c.get("text") or "")[:200], "ts": r["ts"]})
+    return {"items": items, "total": len(items)}
+
+
+def _copy_payload(src: dict) -> dict:
+    """转发时只带走内容，不带原引用与 @。"""
+    out = {}
+    for k in ("text", "attachments", "voice", "dur"):
+        if src.get(k):
+            out[k] = src[k]
+    return out
+
+
+@app.post("/api/forward")
+async def api_forward(request: Request):
+    body = await request.json()
+    src_conv = body.get("conv", "")
+    to_conv = body.get("to", "")
+    device = body.get("device", "")
+    require_member(src_conv, device)
+    require_member(to_conv, device)
+    row = db().execute("SELECT * FROM message WHERE conv=? AND seq=?", (src_conv, int(body.get("seq") or 0))).fetchone()
+    if row is None:
+        raise HTTPException(404, "原消息不存在")
+    src = json.loads(row["content"] or "{}")
+    uid = uid_by_device(device)
+    content = _copy_payload(src)
+    content["name"] = uid_name(uid)
+    content["forwarded_from"] = {"name": src.get("name") or uid_name(row["sender"]),
+                                 "conv": src_conv}
+    msg = add_message(to_conv, str(uid), "user", "text", content)
+    await broadcast(to_conv, {"t": "msg_push", **msg})
+    await broadcast_conv_update()
+    return {"ok": True, "msg": msg}
+
+
+@app.post("/api/merge_forward")
+async def api_merge_forward(request: Request):
+    body = await request.json()
+    src_conv, to_conv, device = body.get("conv", ""), body.get("to", ""), body.get("device", "")
+    require_member(src_conv, device)
+    require_member(to_conv, device)
+    seqs = [int(x) for x in (body.get("seqs") or [])][:50]
+    if not seqs:
+        raise HTTPException(400, "没有选中消息")
+    conn = db()
+    rows = conn.execute("SELECT * FROM message WHERE conv=? AND seq IN (%s) ORDER BY seq"
+                        % ",".join("?" * len(seqs)), [src_conv] + seqs).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        c = json.loads(r["content"] or "{}")
+        items.append({"seq": r["seq"], "name": c.get("name") or (BOT_NAME if str(r["sender"]) == str(BOT_ID) else uid_name(str(r["sender"]))),
+                      "text": c.get("text") or ("[附件] " + ("、".join(a.get("name", "") for a in (c.get("attachments") or [])))),
+                      "ts": r["ts"]})
+    uid = uid_by_device(device)
+    content = {"name": uid_name(uid), "merged": items, "title": f"{src_conv} 的聊天记录"}
+    msg = add_message(to_conv, str(uid), "user", "text", content)
+    await broadcast(to_conv, {"t": "msg_push", **msg})
+    return {"ok": True, "msg": msg}
+
+
+@app.get("/api/history")
+async def get_history(conv: str = "u1001", limit: int = 60, device: str = ""):
+    require_member(conv, device)
+    return {"items": history(conv, min(limit, 200))}
+
+
+@app.post("/api/files")
+async def upload(request: Request):
+    ip = request.client.host if request.client else "?"
+    now = int(time.time())
+    win = _up_rl.get(ip) or (0, 0)
+    if now - win[0] >= 60:
+        win = (now, 0)
+    if win[1] >= UPLOAD_PER_MIN:
+        raise HTTPException(429, "上传太频繁，稍后再试")
+    _up_rl[ip] = (win[0], win[1] + 1)
+    try:
+        used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
+    except Exception:
+        used = 0
+    if used > MAX_TOTAL:
+        raise HTTPException(507, "服务器存储已满")
+    name = unquote(request.headers.get("x-filename", "file.bin"))
+    mime = request.headers.get("x-mime", "application/octet-stream")
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(400, "空文件")
+    if len(raw) > MAX_UPLOAD:
+        raise HTTPException(413, "超过大小上限")
+
+    raw_name = pathlib.Path(name).name
+    ext = pathlib.Path(raw_name).suffix.lower()[:10]
+    fid = "f-" + uuid.uuid4().hex[:12]
+    target = UPLOADS / (fid + ext)
+    target.write_bytes(raw)
+    kind = classify(ext)
+    text, note = "", ""
+    if kind == "doc":
+        text = extract_text(target)
+        if not text.strip():
+            note = "未提取到文本，可下载查看"
+    elif kind == "other":
+        note = "仅支持预览与下载"
+    conn = db()
+    conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (fid, raw_name, mime, kind, len(raw), str(target), len(text), note, int(time.time() * 1000)))
+    conn.commit()
+    conn.close()
+    meta = file_meta(_file_row(fid))
+    meta["text"] = text[:6000]
+    return meta
+
+
+@app.get("/api/files/{fid}")
+async def download(fid: str, inline: int = 0):
+    row = _file_row(fid)
+    if row is None:
+        raise HTTPException(404, "不存在")
+    return FileResponse(row["path"], media_type=row["mime"] or "application/octet-stream",
+                        filename=row["name"],
+                        content_disposition_type="inline" if inline else "attachment")
+
+
+@app.get("/api/files/{fid}/text")
+async def file_text(fid: str):
+    row = _file_row(fid)
+    if row is None:
+        raise HTTPException(404, "不存在")
+    body = extract_text(pathlib.Path(row["path"])) if row["kind"] == "doc" else ""
+    return {"name": row["name"], "kind": row["kind"], "text": body[:8000],
+            "truncated": len(body) > 8000}
+
+
+POSTERS = DATA / "posters"
+
+
+@app.get("/poster/{fid}")
+async def poster(fid: str):
+    """视频封面：取第一帧，客户端未播放时也能看到画面。"""
+    row = _file_row(fid)
+    if row is None or row["kind"] != "video":
+        raise HTTPException(404, "不存在")
+    POSTERS.mkdir(parents=True, exist_ok=True)
+    cache = POSTERS / (fid + ".jpg")
+    if not cache.exists() or cache.stat().st_size == 0:
+        import subprocess
+        src = row["path"]
+        for ts in ("0.1", "1", "0"):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", ts, "-i", src,
+                            "-frames:v", "1", "-vf", "scale=720:-2", str(cache)],
+                           timeout=25, check=False)
+            if cache.exists() and cache.stat().st_size > 0:
+                break
+    if not cache.exists() or cache.stat().st_size == 0:
+        raise HTTPException(404, "无法生成封面")
+    return FileResponse(cache, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.get("/thumb/{fid}")
+async def thumb(fid: str, w: int = 128):
+    """头像/列表用的小图，解决首屏头像慢和流量大的问题。"""
+    row = _file_row(fid)
+    if row is None:
+        raise HTTPException(404, "不存在")
+    if not str(row["mime"]).startswith("image/"):
+        return FileResponse(row["path"])
+    w = max(32, min(int(w), 512))
+    src = pathlib.Path(row["path"])
+    cache = src.with_name(f".thumb-{fid}-{w}.jpg")
+    if not cache.exists():
+        try:
+            from PIL import Image
+            im = Image.open(src).convert("RGB")
+            im.thumbnail((w, w))
+            im.save(cache, "JPEG", quality=84, optimize=True)
+        except Exception:
+            return FileResponse(src)
+    return FileResponse(cache, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.get("/media/{fid}")
+async def media(fid: str, request: Request):
+    row = _file_row(fid)
+    if row is None:
+        raise HTTPException(404, "不存在")
+    path = pathlib.Path(row["path"])
+    size = path.stat().st_size
+    mime = row["mime"] or "application/octet-stream"
+    rng = request.headers.get("range")
+    if not rng:
+        return FileResponse(path, media_type=mime,
+                            headers={"Cache-Control": "public, max-age=604800"})
+    m = re.match(r"bytes=(\d*)-(\d*)", rng)
+    start = int(m.group(1) or 0) if m else 0
+    end = int(m.group(2)) if (m and m.group(2)) else size - 1
+    end = min(end, size - 1)
+    length = max(end - start + 1, 0)
+    with open(path, "rb") as f:
+        f.seek(start)
+        data = f.read(length)
+    return Response(content=data, status_code=206, media_type=mime,
+                    headers={"Content-Range": f"bytes {start}-{end}/{size}",
+                             "Accept-Ranges": "bytes", "Content-Length": str(length)})
+
+
+@app.post("/api/files/{fid}/removebg")
+async def do_removebg(fid: str):
+    row = _file_row(fid)
+    if row is None or row["kind"] != "image":
+        raise HTTPException(400, "仅图片支持去背")
+    src = pathlib.Path(row["path"])
+    dst = src.with_name(src.stem + "_nobg.png")
+    if not dst.exists() and not remove_background(src, dst):
+        raise HTTPException(422, "背景不纯，自动去背失败")
+    new_id = "f-" + uuid.uuid4().hex[:12]
+    conn = db()
+    conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (new_id, pathlib.Path(row["name"]).stem + "-无背景.png", "image/png", "image",
+                  dst.stat().st_size, str(dst), 0, "已去背", int(time.time() * 1000)))
+    conn.commit()
+    conn.close()
+    return file_meta(_file_row(new_id))
+
+
+@app.get("/api/plugins")
+async def plugins():
+    items = []
+    for f in sorted(PLUGIN_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        data["enabled"] = get_setting("plugin_" + data.get("plugin_id", f.stem), True)
+        items.append(data)
+    return {"items": items}
+
+
+@app.post("/api/plugins/{pid}/toggle")
+async def toggle_plugin(pid: str, request: Request):
+    body = await request.json()
+    enable = bool(body.get("enable", True))
+    set_setting("plugin_" + pid, enable)
+    return {"ok": True, "plugin_id": pid, "enabled": enable}
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    remember_host(ws)
+    await ws.accept()
+    conv = "u1001"
+    uid, nick = 1001, "我"
+    try:
+        first = json.loads(await ws.receive_text())
+        if GATEWAY_TOKEN and not check_token(ws):
+            await ws.close(code=4401)
+            return
+        conv = first.get("conv") or conv
+        prof = device_profile(first.get("device", ""), first.get("name", ""),
+                              first.get("kind", "user"))
+        uid, nick = prof["uid"], prof["name"]
+        _sec, _exp = first.get("secret", ""), prof.get("secret", "")
+        if _exp and _sec != _exp:
+            await ws.send_text(json.dumps({"t": "error", "msg": "设备密钥不正确，请重新登录"}, ensure_ascii=False))
+            await ws.close(code=4403)
+            return
+        is_agent = prof.get("kind") == "agent"
+        # 私聊会话必须落在自己的 u<uid>，否则 AI 回复会投到别人的会话
+        if conv.startswith("u") and conv[1:].isdigit() and int(conv[1:]) != uid:
+            conv = f"u{uid}"
+        if conv.startswith("g") and uid not in members_of(conv) and conv != "g1001":
+            conv = f"u{uid}"
+        ws.uid = uid
+        clients.setdefault(conv, set()).add(ws)
+        await ws.send_text(json.dumps({"t": "auth_ok", "bot": {"online": bot.online}, "conv": conv,
+                                       "profile": {"uid": uid, "name": nick, "kind": prof.get("kind"),
+                                                   "code": prof.get("code"), "admin": is_admin(uid)},
+                                       "settings": ui_state(),
+                                       "themes": THEMES + get_setting("custom_themes", []),
+                                       "convs": conv_list(uid), "net": net_info(),
+                                       "sys": {"show_ai_all": get_setting("sys", {}).get("show_ai_all", True), "ai_hidden": (not is_admin(uid) and not get_setting("sys", {}).get("show_ai_all", True))}}, ensure_ascii=False))
+
+        while True:
+            frame = json.loads(await ws.receive_text())
+            if frame.get("t") == "ping":
+                await ws.send_text(json.dumps({"t": "pong"}))
+                continue
+            if frame.get("t") == "call":
+                # 1:1 语音通话信令，只做转发不落库
+                to = int(frame.get("to") or 0)
+                for sock in list(clients.get(f"u{to}", set())):
+                    try:
+                        await sock.send_text(json.dumps({"t": "call", "from": uid, "name": nick,
+                                                         "data": frame.get("data") or {}},
+                                                        ensure_ascii=False))
+                    except Exception:
+                        pass
+                continue
+            if frame.get("t") == "typing":
+                for sock in list(clients.get(conv, set())):
+                    if sock is ws:
+                        continue
+                    try:
+                        await sock.send_text(json.dumps({"t": "typing", "conv": conv,
+                                                         "uid": uid, "name": nick}))
+                    except Exception:
+                        pass
+                continue
+            if frame.get("t") == "switch":
+                target = frame.get("conv") or conv
+                if not ensure_access(target, uid):
+                    await ws.send_text(json.dumps({"t": "error", "msg": "你不在这个群里"}))
+                    continue
+                clients.get(conv, set()).discard(ws)
+                conv = target
+                clients.setdefault(conv, set()).add(ws)
+                await ws.send_text(json.dumps({"t": "switch_ok", "conv": conv}, ensure_ascii=False))
+                continue
+            if frame.get("t") == "profile":
+                prof = device_profile(first.get("device", ""), frame.get("name", ""))
+                nick = prof["name"]
+                await ws.send_text(json.dumps({"t": "profile_ok", "name": nick}))
+                continue
+            if frame.get("t") != "msg_send":
+                continue
+
+            if frame.get("conv") and frame["conv"] != conv:
+                target = frame["conv"]
+                if not ensure_access(target, uid):
+                    await ws.send_text(json.dumps({"t": "error", "msg": "你不在这个群里"}))
+                    continue
+                clients.get(conv, set()).discard(ws)
+                conv = target
+                clients.setdefault(conv, set()).add(ws)
+
+            payload = frame.get("content") or {}
+            ftype = frame.get("type", "text")
+            cid = frame.get("client_msg_id", "")
+            is_group = conv.startswith("g")
+            row = conv_row(conv)
+            if is_group:
+                if not ensure_access(conv, uid):
+                    await ws.send_text(json.dumps({"t": "error", "msg": "你不在这个群里"}))
+                    continue
+                if (row["mute_until"] or 0) > int(time.time()) and not is_admin(uid):
+                    await ws.send_text(json.dumps({"t": "error", "msg": "群已禁言"}))
+                    continue
+
+            text = payload.get("text", "")
+            attachments, images, segments = [], [], []
+            has_image = False
+
+            for fid in payload.get("file_ids", [])[:6]:
+                frow = _file_row(fid)
+                if frow is None:
+                    continue
+                attachments.append(file_meta(frow))
+                if frow["kind"] == "image":
+                    has_image = True
+                    images.append(f"/media/{fid}")
+                    segments.append({"type": "image",
+                                     "data": {"file": PUBLIC_BASE.rstrip("/") + f"/media/{fid}"
+                                              if PUBLIC_BASE else f"/media/{fid}"}})
+
+            # 1) 界面/群管理动作：本地先执行（群动作只在群里跑）
+            # 管理权只归服务器 AI（BOT_ID）；外部 agent 与普通用户只能聊天
+            local_actions = parse_intent(text, has_image)
+            if uid != BOT_ID and not is_admin(uid):
+                local_actions = [a for a in local_actions if not a["type"].startswith("chat.")]
+            if is_group:
+                for a in local_actions:
+                    if a["type"].startswith("chat."):
+                        a["payload"].setdefault("conv_id", conv)
+            else:
+                local_actions = [a for a in local_actions
+                                 if not a["type"].startswith("chat.") or a["type"] == "chat.create"]
+            if has_image:
+                img_ids = [a["file_id"] for a in attachments if a["kind"] == "image"]
+                for a in local_actions:
+                    if a["type"] == "theme.from_image" and img_ids:
+                        a["payload"] = {"file_id": img_ids[0]}
+
+            notes = []
+            if local_actions:
+                st, notes = apply_actions(local_actions, conv, uid)
+                await broadcast_all({"t": "ui_update", "settings": st, "actions": local_actions,
+                                     "themes": THEMES + get_setting("custom_themes", [])})
+                if any(a["type"].startswith("chat.") for a in local_actions):
+                    await broadcast_conv_update()
+
+            prompt = [text] if text else []
+            for a in attachments:
+                frow = _file_row(a["file_id"])
+                if a["kind"] == "doc":
+                    body = extract_text(pathlib.Path(frow["path"])) if frow else ""
+                    if len(body) <= 6000:
+                        prompt.append(f"【文件】{a['name']}，共{len(body)}字符：\n{body}")
+                    elif body:
+                        prompt.append(f"【文件】{a['name']}，共{len(body)}字符，前4000字符：\n{body[:4000]}")
+                    else:
+                        prompt.append(f"【文件】{a['name']}（未提取到文本，用户可下载查看）")
+                elif a["kind"] == "image":
+                    prompt.append(f"【图片】{a['name']}")
+                elif a["kind"] == "video":
+                    prompt.append(f"【视频】{a['name']}（不解析内容）")
+                elif a["kind"] in ("audio", "other"):
+                    prompt.append(f"【附件】{a['name']}（仅预览/下载）")
+
+            user_text = "\n\n".join(prompt).strip()
+            if not user_text:
+                await ws.send_text(json.dumps({"t": "error", "msg": "空消息"}, ensure_ascii=False))
+                continue
+
+            extra = {}
+            rp = payload.get("reply_to")
+            if rp:
+                try:
+                    extra["quote"] = msg_quote(conv, int(rp))
+                except Exception:
+                    pass
+            if payload.get("mentions"):
+                extra["mentions"] = [int(x) for x in payload["mentions"][:20]]
+            if payload.get("voice"):
+                extra["voice"] = True
+                extra["dur"] = int(payload.get("dur") or 0)
+            if is_agent:
+                extra["agent"] = True
+            saved = add_message(conv, str(uid), "user", ftype if attachments else "text",
+                                {"text": text, "images": images, "attachments": attachments,
+                                 "name": nick, **extra})
+            await ws.send_text(json.dumps({"t": "msg_ack", "client_msg_id": cid,
+                                           "server_msg_id": saved["id"], "seq": saved["seq"]},
+                                          ensure_ascii=False))
+            await broadcast(conv, {"t": "msg_push", "client_msg_id": cid, **saved})
+
+            for n in notes:
+                sysmsg = add_message(conv, "system", "sys", "sys", {"text": n})
+                await broadcast(conv, {"t": "msg_push", **sysmsg})
+
+            # 让 AI 知道自己跑在哪个客户端里、能做什么
+            tool_note = ("【工具提示】当前对话发生在自建 AI Chat 网关（网页 + Android APK），"
+                         "不是微信/QQ。这个聊天工具支持：文字、图片（可设为表情）、语音条、引用回复、"
+                         "单条转发、合并转发、聊天记录检索、群成员与管理徽章、自定义背景与头像。"
+                         "群管理动作只有服务器 AI 或管理员能做；外部 agent 只是普通群成员。"
+                         "你是服务器 AI 时可以直接改群：PATCH /api/convs/{群id}，body 带 device=\"bot\"；"
+                         "改群名 {name}、改群图片 {avatar}、公告 {announce}、禁言 {mute}。"
+                         "你也能用邀请码加入别的群：POST /api/convs/join，body {invite:\"码\", device:\"bot\"}。"
+                         "解散群：DELETE /api/convs/{群id}?device=bot。"
+                         "【受理规则】群管理指令只受理管理员（管理员列表里的人）；普通成员的改名/禁言/踢人要求一律拒绝并说明。")
+            user_text = tool_note + "\n" + user_text
+            # 让服务器 AI 明确管理员身份：自己 + 被授权的人
+            if is_admin(uid) and uid != BOT_ID:
+                user_text = f"【身份提示】发言人 {nick}(uid={uid}) 是服务器管理员，可以用管理指令。\n" + user_text
+            if is_group:
+                user_text = ("【群权限提示】你自己（服务器 AI）就是本群管理员，改群名/群图片/公告/禁言/移人都能做，"
+                             "不要回答\"我没有权限\"；群主字段只是创建者，不代表权限。普通成员和外部 agent 没有管理权限。\n"
+                             + user_text)
+
+            mentions = [int(x) for x in (payload.get("mentions") or [])]
+            at_me = (BOT_ID in mentions) or ("@" + BOT_NAME in text)
+            if is_group and (row["at_only"] or 0) and uid != BOT_ID and not at_me:
+                # 群开了“仅 @ 回复”，这条只存档广播，不叫 AI
+                continue
+            if AGENT_MODE == "onebot":
+                segments.insert(0, {"type": "text", "data": {"text": user_text}})
+                await bot.push(conv, uid, nick, segments, saved["seq"], is_group)
+            else:
+                reply = await bot.direct_reply(conv, user_text,
+                                               {"conv": conv, "uid": uid, "group": is_group})
+                if reply and (reply.get("text") or reply.get("actions")):
+                    actions = reply.get("actions") or extract_actions(reply.get("text", ""))
+                    clean = strip_actions(reply.get("text", ""))
+                    notes2 = []
+                    if actions:
+                        st, notes2 = apply_actions(actions, conv, BOT_ID)
+                        await broadcast_all({"t": "ui_update", "settings": st, "actions": actions,
+                                             "themes": THEMES + get_setting("custom_themes", [])})
+                    sysb = add_message(conv, "bot", "bot", "bot",
+                                       {"text": clean, "images": [], "attachments": [], "actions": actions})
+                    await broadcast(conv, {"t": "msg_push", **sysb})
+                    for n in notes2:
+                        await broadcast(conv, {"t": "msg_push", **add_message(conv, "system", "sys", "sys", {"text": n})})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        log("客户端异常：" + type(exc).__name__)
+    finally:
+        clients.get(conv, set).discard(ws)
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8099")), access_log=False)
