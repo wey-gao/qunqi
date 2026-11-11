@@ -1036,7 +1036,7 @@ var DEV = (function(){
   }
   return v;
 })();
-var ME = {uid:1001, name:'', kind:'user', code:''}, NET = {base:(location.protocol==='file:'?'http://127.0.0.1:8099':location.origin)};
+var ME = {uid:1001, name:'', kind:'user', code:''}, NET = {base:(location.protocol==='file:'?'__QUNQI_SERVER__':location.origin)};
 var SENT = {}, MRGS = {}, OPMSG = null, MULTI = false, SEL = {}, REPLY = null, NAMES = {}, VOICE = null, CALL = null, PEER = null, CALLDATA = null;
 var READ = JSON.parse(LS.getItem('gw_read')||'{}');
 var MENTION = JSON.parse(LS.getItem('gw_mention')||'{}');
@@ -1789,7 +1789,7 @@ function connect(){
   if(location.protocol==='https:') proto='wss';
   if(FILE_MODE || SAVED_SRV){
     if(!API_BASE) return;
-    try{ var u=new URL(API_BASE); proto = u.protocol==='https:'?'wss':'ws'; host=u.host; }catch(e){ proto='ws'; host='127.0.0.1:8099'; }
+    try{ var u=new URL(API_BASE); proto = u.protocol==='https:'?'wss':'ws'; host=u.host; }catch(e){ proto='ws'; host=(API_BASE||location.origin).replace(/^https?:\/\//,'').replace(/\/.*$/,''); }
   }
   ws = new WebSocket(proto+'://'+host+'/ws'+(TK?'?token='+encodeURIComponent(TK):''));
   ws.onopen = function(){ ws.send(JSON.stringify({t:'auth', conv:current, device:DEV, name:ME.name, secret:SECRET})); };
@@ -2379,7 +2379,7 @@ function goServer(v){
 $('btnSrvSave').onclick=function(){ goServer($('srvInput').value); };
 $('btnSrvReset').onclick=function(){
   try{ localStorage.removeItem('gw_server'); localStorage.removeItem('gw_secret'); localStorage.removeItem('gw_token'); }catch(e){}
-  location.href = 'http://127.0.0.1:8099/';
+  location.href = (API_BASE||location.origin) + '/';
 };
 $('btnProfLogout').onclick=function(){
   if(!confirm('退出后本机需要重新进入，服务器聊天记录仍在。')) return;
