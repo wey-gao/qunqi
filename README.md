@@ -31,7 +31,7 @@
 ## 30 秒部署
 
 ```bash
-git clone <你的仓库> aichat && cd aichat && sudo bash scripts/install.sh
+git clone https://github.com/wey-gao/qunqi.git aichat && cd aichat && sudo bash scripts/install.sh
 ```
 
 零交互（AI 代为部署）：`sudo PORT=8099 PUBLIC_BASE=http://1.2.3.4:8099 ADMIN_CODES=ABC123 APK_URL=<直链> bash scripts/install.sh --yes`
@@ -43,7 +43,7 @@ Docker：`cp gateway.env.example gateway.env && docker compose up -d`
 ## 一键部署（部署者视角）
 
 ```bash
-git clone <你的仓库> aichat && cd aichat
+git clone https://github.com/wey-gao/qunqi.git aichat && cd aichat
 bash scripts/install.sh          # 交互问端口/公网地址/AI 名称/管理员码，自动建 venv + systemd + 自检
 ```
 
