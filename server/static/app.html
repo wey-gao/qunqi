@@ -806,6 +806,10 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <button class="wbtn" id="btnRestoreCode" type="button">用这个身份码恢复</button>
       <div style="font-size:11.5px;color:var(--dim);line-height:1.7;margin-top:8px">恢复后本地会重新同步聊天记录。更换手机、清除数据、换浏览器时都能接回原来的账号。</div>
     </div>
+    <div class="sec"><h4>通知</h4>
+      <label class="qmeta" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="chkDnd"> 免打扰（后台收到消息不弹通知，进来再看）
+      </label></div>
     <div class="sec"><h4>设备</h4><div class="me"><span class="mi">ID</span><span class="mn" id="myDevice">—</span></div>
       <div id="devList" style="margin-top:6px"></div></div>
     <div class="sec"><h4>存储</h4><div class="qmeta" id="stgInfo">读取中…</div>
@@ -881,6 +885,8 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <button data-op="reply">回复</button>
       <button data-op="copy">复制</button>
       <button data-op="forward">转发</button>
+      <button data-op="recall">撤回（2 分钟内）</button>
+      <button data-op="edit">编辑（5 分钟内）</button>
       <button data-op="multi">多选</button>
       <button data-op="del">删除这条</button>
     </div>
@@ -1270,6 +1276,7 @@ function renderConvs(){
 
 function switchConv(id){
   try{ var old=current; if(old) saveDraftFor(old); }catch(e){}
+  EDITSEQ=0;
   if(id===current){ $('side').classList.remove('show'); $('mask').classList.remove('show'); return; }
   current = id;
   try{ loadDraft(); }catch(e){}
@@ -1626,6 +1633,13 @@ function idbLoad(conv){ return idbOpen().then(function(db){ return new Promise(f
   q.onerror=function(){ res([]); };
 }); }).catch(function(){ return []; }); }
 
+function redrawCurrent(){
+  idbLoad(current).then(function(items){
+    var l=$('list'); l.innerHTML=''; LAST_TS=0; LAST_SENDER=null; LAST_SEP=0;
+    items.forEach(function(m){ renderMsg(m); });
+    l.scrollTop = l.scrollHeight;
+  });
+}
 async function loadHistory(){
   var cached = [];
   try{ cached = await idbLoad(current); }catch(e){}
@@ -1684,6 +1698,27 @@ Array.prototype.forEach.call(document.querySelectorAll('#sheetOp [data-op]'), fu
       toast('已复制'); closeSheets(true); return;
     }
     if(op==='forward'){ renderFwd('single'); closeSheets(true); openSheet('sheetFwd'); return; }
+    if(op==='recall'){
+      if(!m.seq){ toast('这条还没落库，不能撤回'); return; }
+      askConfirm('撤回后双方都会变成“该消息已被撤回”，确定？').then(function(ok){
+        if(!ok) return;
+        fetch('/api/messages/'+encodeURIComponent(current)+'/'+m.seq+'/recall?device='+encodeURIComponent(DEV), {method:'POST'})
+          .then(function(r){ toast(r.ok ? '已撤回' : '撤回失败'); })
+          .catch(function(){ toast('撤回失败'); });
+        closeSheets(true);
+      });
+      return;
+    }
+    if(op==='edit'){
+      if(!m.seq){ toast('发出去之后才能编辑'); return; }
+      EDITSEQ = m.seq;
+      $('input').value = (c.text||'');
+      toast('编辑中，点发送即保存');
+      closeSheets(true);
+      $('input').focus();
+      refreshSend();
+      return;
+    }
     if(op==='multi'){ enterMulti(); closeSheets(true); return; }
     if(op==='del'){
       if(!confirm('删除这条消息？服务器和本机都会删掉。')) return;
@@ -1848,7 +1883,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.8', UP_URL = '';
+var APP_VER = '0.53.9', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -1939,6 +1974,19 @@ function connect(){
       if(f.themes){ THEMES = f.themes; renderThemes(); }
       applyState();
       if(f.actions && f.actions.length) toast(describe(f.actions));
+    } else if(f.t==='msg_recall' || f.t==='msg_edit'){
+      if(f.conv===current){
+        idbLoad(current).then(function(items){
+          var hit=items.filter(function(x){ return String(x.seq)===String(f.seq); })[0];
+          if(hit){
+            hit.content = hit.content || {};
+            if(f.t==='msg_recall'){ hit.content = {text:'该消息已被撤回', recalled:1}; }
+            else { hit.content.text = f.text; hit.content.edited = 1; }
+            idbSave([hit]);
+          }
+          redrawCurrent();
+        });
+      }
     } else if(f.t==='msg_del'){
       Array.prototype.forEach.call($('list').children, function(el){
         if(el.dataset && String(el.dataset.seq)===String(f.seq)) el.remove();
@@ -1948,7 +1996,7 @@ function connect(){
       var cv = CONVS.filter(function(x){ return x.id===f.conv; })[0];
       if(cv && f.seq){ cv.last_seq = Math.max(cv.last_seq||0, f.seq); }
       var c = f.content || {};
-      var hitMe = (c.mentions||[]).indexOf(ME.uid) >= 0 || (c.text && ME.name && c.text.indexOf('@'+ME.name)>=0);
+      var hitMe = (c.mentions||[]).indexOf(-1) >= 0 || (c.mentions||[]).indexOf(ME.uid) >= 0 || (c.text && ME.name && c.text.indexOf('@'+ME.name)>=0);
       if(f.conv!==current){
         if(hitMe){ MENTION[f.conv]=(MENTION[f.conv]||0)+1; LS.setItem('gw_mention', JSON.stringify(MENTION)); }
         renderConvs(); return;
@@ -2023,6 +2071,16 @@ function loadDraft(){
 function send(opts){
   opts = opts || {};
   var text = $('input').value.trim();
+  if(EDITSEQ){
+    if(!text){ toast('内容不能为空'); return; }
+    var sq=EDITSEQ; EDITSEQ=0;
+    fetch('/api/messages/'+encodeURIComponent(current)+'/'+sq+'?device='+encodeURIComponent(DEV),
+      {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
+      .then(function(r){ toast(r.ok ? '已保存' : '保存失败'); })
+      .catch(function(){ toast('保存失败'); });
+    $('input').value=''; refreshSend();
+    return;
+  }
   if(!text && !pending.length) return;
   if(!ws || ws.readyState!==1){
     var qmid='c-'+Math.random().toString(16).slice(2,8);
@@ -2970,6 +3028,7 @@ $('btnRefresh').onclick = async function(){
   }catch(e){ toast('诊断失败'); }
 };
 var AT_UID = [], AT_POS = -1;
+var EDITSEQ = 0;
 async function openAtSheet(){
   if(String(current).charAt(0)!=='g'){ toast('只有群聊能 @ 人'); return; }
   try{
@@ -2977,7 +3036,9 @@ async function openAtSheet(){
     if(!r.ok){ toast('读取成员失败'); return; }
     var d=await r.json();
     var others=(d.items||[]).filter(function(m){ return String(m.uid)!==String(ME.uid); });
-    $('atList').innerHTML = others.map(function(m){
+    $('atList').innerHTML = '<div class="atrow" data-uid="-1" data-name="全体成员">'+
+      '<div class="atav">全</div><div class="atnm"><span class="nm">全体成员</span><span class="badge adm">所有人</span></div><div class="atgo">›</div></div>'+
+      others.map(function(m){
       var initial = m.bot ? 'AI' : (String(m.name||'?').slice(0,1).toUpperCase());
       var badges = m.bot ? '<span class="badge bot">AI</span>' : (m.admin ? '<span class="badge adm">管理员</span>' : '');
       return '<div class="atrow" data-uid="'+esc(String(m.uid))+'" data-name="'+esc(m.name)+'">'+
@@ -3396,6 +3457,13 @@ $('btnRestoreCode').onclick=async function(){
   }catch(e){ toast('恢复失败'); }
 };
 $('btnIdentity').onclick=function(){ openSheet('sheetIdentity'); loadIdentity(); };
+try{ $('chkDnd').checked = LS.getItem('gw_dnd')==='1'; }catch(e){}
+$('chkDnd').onchange=function(){
+  var on=$('chkDnd').checked;
+  try{ LS.setItem('gw_dnd', on?'1':'0'); }catch(e){}
+  try{ if(window.NativePush && NativePush.setDnd) NativePush.setDnd(on); }catch(e){}
+  toast(on?'已开启免打扰':'已关闭免打扰');
+};
 $('btnExportConv').onclick=function(){
   if(!current){ toast('先打开一个会话'); return; }
   var u = (API_BASE||location.origin)+'/api/export?conv='+encodeURIComponent(current)

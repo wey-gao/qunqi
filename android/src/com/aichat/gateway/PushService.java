@@ -107,7 +107,8 @@ public class PushService extends Service {
                     long mx = d.optLong("max_ts", since);
                     if (mx > 0) p.edit().putLong("since", mx).apply();
                     hadNews = (arr != null && arr.length() > 0);
-                    if (hadNews && !MainActivity.isVisible()) {
+                    boolean dnd = p.getBoolean("dnd", false);
+                    if (hadNews && !MainActivity.isVisible() && !dnd) {
                         for (int i = Math.max(0, arr.length() - 3); i < arr.length(); i++) {
                             JSONObject m = arr.getJSONObject(i);
                             notifyMsg(m.optString("conv_name", "新消息"), m.optString("text", ""), m.optString("conv", ""));

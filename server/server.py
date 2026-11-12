@@ -2955,6 +2955,57 @@ async def export_conv(conv: str = "", device: str = "", limit: int = 5000):
                     headers={"Content-Disposition": "attachment; filename=qunqi-%s.json" % conv})
 
 
+@app.post("/api/messages/{cid}/{seq}/recall")
+async def recall_message(cid: str, seq: int, request: Request, device: str = ""):
+    uid = require_member(cid, device)
+    conn = db()
+    row = conn.execute("SELECT * FROM message WHERE conv=? AND seq=?", (cid, seq)).fetchone()
+    if row is None:
+        conn.close(); raise HTTPException(404, "消息不存在")
+    if int(row["sender"] or 0) != int(uid) and not is_admin(uid):
+        conn.close(); raise HTTPException(403, "只能撤回自己的消息")
+    if not is_admin(uid) and time.time() - int(row["ts"] or 0) > 120:
+        conn.close(); raise HTTPException(400, "超过 2 分钟不能撤回")
+    try:
+        c = json.loads(row["content"] or "{}")
+    except Exception:
+        c = {}
+    c = {"text": "该消息已被撤回", "recalled": 1}
+    conn.execute("UPDATE message SET content=? WHERE conv=? AND seq=?",
+                 (json.dumps(c, ensure_ascii=False), cid, seq))
+    conn.commit(); conn.close()
+    await broadcast(cid, {"t": "msg_recall", "conv": cid, "seq": seq})
+    return {"ok": True}
+
+
+@app.patch("/api/messages/{cid}/{seq}")
+async def edit_message(cid: str, seq: int, request: Request, device: str = ""):
+    uid = require_member(cid, device)
+    body = await request.json()
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "内容不能为空")
+    conn = db()
+    row = conn.execute("SELECT * FROM message WHERE conv=? AND seq=?", (cid, seq)).fetchone()
+    if row is None:
+        conn.close(); raise HTTPException(404, "消息不存在")
+    if int(row["sender"] or 0) != int(uid):
+        conn.close(); raise HTTPException(403, "只能编辑自己的消息")
+    if time.time() - int(row["ts"] or 0) > 300:
+        conn.close(); raise HTTPException(400, "超过 5 分钟不能编辑")
+    try:
+        c = json.loads(row["content"] or "{}")
+    except Exception:
+        c = {}
+    c["text"] = text[:2000]
+    c["edited"] = 1
+    conn.execute("UPDATE message SET content=? WHERE conv=? AND seq=?",
+                 (json.dumps(c, ensure_ascii=False), cid, seq))
+    conn.commit(); conn.close()
+    await broadcast(cid, {"t": "msg_edit", "conv": cid, "seq": seq, "text": text[:2000]})
+    return {"ok": True}
+
+
 @app.get("/api/convs/{cid}/notice")
 async def get_notice(cid: str, device: str = ""):
     try:

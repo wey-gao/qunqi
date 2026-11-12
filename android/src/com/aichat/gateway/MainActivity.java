@@ -242,6 +242,13 @@ public class MainActivity extends Activity {
                 if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
             } catch (Throwable ignored) {}
         }
+
+        @JavascriptInterface
+        public void setDnd(boolean on) {
+            try {
+                PushService.prefs(MainActivity.this).edit().putBoolean("dnd", on).apply();
+            } catch (Throwable ignored) {}
+        }
     }
 
     class RecBridge {
