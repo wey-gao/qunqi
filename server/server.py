@@ -78,6 +78,7 @@ _up_rl: dict = {}
 app = FastAPI(title="AI Chat Gateway")
 
 SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api/status", "/api/restore"}
+DOC_EXEMPT_PREFIX = "/api/docs/"
 
 
 @app.middleware("http")
@@ -99,7 +100,7 @@ async def diag_log(request: Request, call_next):
 async def secret_guard(request: Request, call_next):
     """知道 device id 不够，还得有设备密钥；AI 的 device=bot 额外要 BOT_TOKEN。"""
     path = request.url.path
-    if not path.startswith("/api") or path in SECRET_EXEMPT:
+    if not path.startswith("/api") or path in SECRET_EXEMPT or path.startswith(DOC_EXEMPT_PREFIX):
         return await call_next(request)
     if path == "/api/me" and not PUBLIC_MODE:
         # 自用模式：缺密钥也能读资料，但接口不返回 secret
@@ -3167,6 +3168,20 @@ async def set_notice(cid: str, request: Request, device: str = ""):
     set_setting("conv_notice", notes)
     await broadcast_all({"t": "notice", "conv": cid, "notice": text})
     return {"ok": True, "notice": text}
+
+
+DOCS_DIR = BASE / "docs"
+_DOC_WHITELIST = {"OPS.md", "GUIDE.md", "AGENT_API.md"}
+
+
+@app.get("/api/docs/{name}")
+async def get_doc(name: str):
+    if name not in _DOC_WHITELIST:
+        raise HTTPException(404, "文档不存在")
+    path = DOCS_DIR / name
+    if not path.exists():
+        raise HTTPException(404, "文档不存在")
+    return {"name": name, "updated_at": int(path.stat().st_mtime), "text": path.read_text(encoding="utf-8")}
 
 
 @app.get("/api/plugins")
