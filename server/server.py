@@ -213,9 +213,10 @@ THEMES = [
 
 DEFAULT_UI = {
     "theme": "light_clean",
-    "bg": {"url": "", "brightness": 1.0, "overlay": 0.15, "blur": 0},
+    "bg": {"url": "", "brightness": 1.0, "overlay": 0.15, "blur": 0,
+           "x": 0, "y": 0, "zoom": 1.02},
     "avatar": {"url": "", "shape": "circle", "size": 44, "removeBg": False,
-               "border": 2, "borderColor": "#12b7f5"},
+               "border": 2, "borderColor": "#12b7f5", "px": 50, "py": 50},
     "bubble": {"radius": 14, "opacity": 1.0},
     "font": {"size": 15},
 }

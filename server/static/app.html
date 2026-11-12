@@ -19,7 +19,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;overflow:hidden}
-#bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:scale(1.02) translateZ(0)}
+#bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:translate(var(--bgX,0),var(--bgY,0)) scale(var(--bgZoom,1.02)) translateZ(0);transform-origin:center}
 #bgOverlay{position:fixed;inset:0;z-index:-1;background:#05070a;opacity:.15;pointer-events:none}
 #app{display:flex;height:100dvh;position:relative}
 
@@ -62,7 +62,8 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 .row{display:flex;gap:8px;margin-bottom:12px;align-items:flex-end}
 .row.user{flex-direction:row-reverse}
 .av{width:28px;height:28px;flex:0 0 auto;display:grid;place-items:center;font-size:10.5px;color:var(--dim);background:var(--panel2);overflow:hidden}
-.av img{width:100%;height:100%;object-fit:cover;display:block}
+.av img{width:100%;height:100%;object-fit:cover;object-position:var(--avX,50%) var(--avY,50%);display:block}
+.avpv .pv img{object-position:var(--avX,50%) var(--avY,50%)}
 .bub{max-width:min(76%,560px);padding:9px 12px;border-radius:var(--radius);background:var(--ai);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word;line-height:1.65;font-size:var(--fs)}
 .row.user .bub{background:var(--user);border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
 .row.bot .bub{border-bottom-left-radius:5px}
@@ -980,11 +981,20 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <button class="wbtn" id="btnRmBg" type="button">去掉头像背景（纯色底）</button>
       <p class="sdesc" id="aiAvatarTip" style="display:none">AI 头像由服务器管理员统一维护，你可以到左侧“我的资料”里改自己的头像。</p>
     </div>
+    <div class="sec"><h4>头像取景（本机）</h4>
+      <p class="sdesc">调整头像显示的是画面哪一部分，只影响这台设备。</p>
+      <div class="sld"><label>取景 X</label><input type="range" id="avPx" min="0" max="100" step="1"><output id="avPxV"></output></div>
+      <div class="sld"><label>取景 Y</label><input type="range" id="avPy" min="0" max="100" step="1"><output id="avPyV"></output></div>
+      <div class="avpv"><div><div class="pv" id="pvMe2"></div><div class="lab">我的头像</div></div></div>
+    </div>
     <div class="sec"><h4>背景与文字</h4>
       <p class="sdesc">群聊背景由群内统一设置；这里调整的背景只在私聊生效。</p>
       <div class="sld"><label>亮度</label><input type="range" id="bgBright" min="0.2" max="1.3" step="0.02"><output id="bgBrightV"></output></div>
       <div class="sld"><label>遮罩</label><input type="range" id="bgOverlayR" min="0" max="0.9" step="0.02"><output id="bgOverlayV"></output></div>
       <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="24" step="1"><output id="bgBlurV"></output></div>
+      <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-15" max="15" step="1"><output id="bgXV"></output></div>
+      <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-15" max="15" step="1"><output id="bgYV"></output></div>
+      <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
       <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
@@ -1223,6 +1233,11 @@ function applyState(){
   r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
 
   var B = curBg();
+  r.setProperty('--avX', Math.max(0, Math.min(100, Number(S.avatar.px==null?50:S.avatar.px)))+'%');
+  r.setProperty('--avY', Math.max(0, Math.min(100, Number(S.avatar.py==null?50:S.avatar.py)))+'%');
+  r.setProperty('--bgX', Math.max(-30, Math.min(30, Number(B.x||0)))+'%');
+  r.setProperty('--bgY', Math.max(-30, Math.min(30, Number(B.y||0)))+'%');
+  r.setProperty('--bgZoom', String(Math.max(1, Math.min(2, Number(B.zoom||1.02)))));
   var bgEl = $('bg');
   if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
   else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
@@ -1252,6 +1267,7 @@ function applyState(){
   }
   if($('pvAI')) paintAvatar($('pvAI'), av.url, 'AI');
   if($('pvMe')) paintAvatar($('pvMe'), av.me, '我');
+  if($('pvMe2')) paintAvatar($('pvMe2'), av.me, '我');
   if($('btnUpGroupAvatar')) $('btnUpGroupAvatar').style.display = (String(current).charAt(0)==='g' && ME.admin ? '' : 'none');
   syncSheet();
 }
@@ -1942,7 +1958,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.15', UP_URL = '';
+var APP_VER = '0.53.16', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2611,10 +2627,15 @@ function syncMyAvatar(){
 
 function syncSheet(){
   $('avSize').value = S.avatar.size; $('avSizeV').textContent = S.avatar.size;
+  $('avPx').value = (S.avatar.px==null?50:S.avatar.px); $('avPxV').textContent = $('avPx').value;
+  $('avPy').value = (S.avatar.py==null?50:S.avatar.py); $('avPyV').textContent = $('avPy').value;
   $('avBorder').value = S.avatar.border; $('avBorderV').textContent = S.avatar.border;
   $('bgBright').value = S.bg.brightness; $('bgBrightV').textContent = (+S.bg.brightness).toFixed(2);
   $('bgOverlayR').value = S.bg.overlay; $('bgOverlayV').textContent = (+S.bg.overlay).toFixed(2);
   $('bgBlur').value = S.bg.blur; $('bgBlurV').textContent = S.bg.blur;
+  $('bgX').value = S.bg.x||0; $('bgXV').textContent = $('bgX').value;
+  $('bgY').value = S.bg.y||0; $('bgYV').textContent = $('bgY').value;
+  $('bgZoom').value = S.bg.zoom||1.02; $('bgZoomV').textContent = Number($('bgZoom').value).toFixed(2);
   $('fontSize').value = S.font.size; $('fontSizeV').textContent = S.font.size;
   $('bubR').value = S.bubble.radius; $('bubRV').textContent = S.bubble.radius;
   var bo = S.bubble.opacity == null ? 1 : +S.bubble.opacity;
@@ -2631,6 +2652,10 @@ $('shapeOpt').onclick = function(e){
 };
 $('avSize').oninput = function(e){ S.avatar.size=+e.target.value; $('avSizeV').textContent=e.target.value; applyState(); };
 $('avSize').onchange = function(){ saveSettings({avatar:{size:S.avatar.size}}); };
+$('avPx').oninput = function(e){ S.avatar.px=+e.target.value; $('avPxV').textContent=e.target.value; applyState(); };
+$('avPx').onchange = function(){ saveSettings({avatar:{px:S.avatar.px}}); };
+$('avPy').oninput = function(e){ S.avatar.py=+e.target.value; $('avPyV').textContent=e.target.value; applyState(); };
+$('avPy').onchange = function(){ saveSettings({avatar:{py:S.avatar.py}}); };
 $('avBorder').oninput = function(e){ S.avatar.border=+e.target.value; $('avBorderV').textContent=e.target.value; applyState(); };
 $('avBorder').onchange = function(){ saveSettings({avatar:{border:S.avatar.border}}); };
 $('bgBright').oninput = function(e){ S.bg.brightness=+e.target.value; $('bgBrightV').textContent=(+e.target.value).toFixed(2); applyState(); };
@@ -2639,6 +2664,12 @@ $('bgOverlayR').oninput = function(e){ S.bg.overlay=+e.target.value; $('bgOverla
 $('bgOverlayR').onchange = function(){ saveSettings({bg:{overlay:S.bg.overlay}}); };
 $('bgBlur').oninput = function(e){ S.bg.blur=+e.target.value; $('bgBlurV').textContent=e.target.value; applyState(); };
 $('bgBlur').onchange = function(){ saveSettings({bg:{blur:S.bg.blur}}); };
+$('bgX').oninput = function(e){ S.bg.x=+e.target.value; $('bgXV').textContent=e.target.value; applyState(); };
+$('bgX').onchange = function(){ saveSettings({bg:{x:S.bg.x}}); };
+$('bgY').oninput = function(e){ S.bg.y=+e.target.value; $('bgYV').textContent=e.target.value; applyState(); };
+$('bgY').onchange = function(){ saveSettings({bg:{y:S.bg.y}}); };
+$('bgZoom').oninput = function(e){ S.bg.zoom=+e.target.value; $('bgZoomV').textContent=(+e.target.value).toFixed(2); applyState(); };
+$('bgZoom').onchange = function(){ saveSettings({bg:{zoom:S.bg.zoom}}); };
 $('fontSize').oninput = function(e){ S.font.size=+e.target.value; $('fontSizeV').textContent=e.target.value; applyState(); };
 $('fontSize').onchange = function(){ saveSettings({font:{size:S.font.size}}); };
 $('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyState(); };
@@ -2696,6 +2727,7 @@ function openMyProfile(){
   $('profDevice').textContent = '设备 '+DEV;
   if($('profSrv')) $('profSrv').textContent = (NET.base||location.origin);
   if($('pvMe')) paintAvatar($('pvMe'), S.avatar.me, '我');
+  if($('pvMe2')) paintAvatar($('pvMe2'), S.avatar.me, '我');
 }
 $('btnSaveProfile').onclick=async function(){
   var name=($('profName').value||'').trim();
