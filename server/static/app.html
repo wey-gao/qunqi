@@ -1263,9 +1263,11 @@ function attHtml(a){
     return '<div class="audbox"><audio controls preload="metadata" src="/media/'+esc(a.file_id)+'"></audio>'+
       '<span style="font-size:11px;color:var(--dim)">'+esc(a.name)+'</span></div>';
   }
+  var kname = a.kind==='doc'?'文档':a.kind==='archive'?'压缩包':a.kind==='other'?'文件':'文件';
+  var canPrev = (a.kind==='doc' || a.kind==='archive');
   return '<div class="filecard"><div class="fi"><svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/></svg></div>'+
-    '<div class="fn"><b>'+esc(a.name)+'</b><i>'+fmt(a.size)+(a.kind==='doc'?' · 文档':'')+'</i></div>'+
-    '<div class="fops"><button data-text="'+esc(a.file_id)+'" data-tname="'+esc(a.name)+'">预览</button>'+
+    '<div class="fn"><b>'+esc(a.name)+'</b><i>'+fmt(a.size)+' · '+kname+(a.note?(' · '+esc(a.note)):'')+'</i></div>'+
+    '<div class="fops">'+(canPrev?'<button data-text="'+esc(a.file_id)+'" data-tname="'+esc(a.name)+'">预览</button>':'')+
     '<a href="/api/files/'+esc(a.file_id)+'" download="'+esc(a.name)+'">下载</a></div></div>';
 }
 
@@ -1786,7 +1788,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.0', UP_URL = '';
+var APP_VER = '0.53.1', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){

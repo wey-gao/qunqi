@@ -118,11 +118,17 @@ async def token_guard(request: Request, call_next):
         return JSONResponse({"detail": "token required", "how": "?token= 或 X-Gateway-Token"}, status_code=401)
     return await call_next(request)
 
-IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv"}
-AUDIO_EXT = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
-DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".json", ".log",
-           ".py", ".js", ".html", ".css", ".sql", ".yaml", ".yml"}
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff",
+             ".avif", ".jfif", ".ico"}
+VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".m4v", ".3gp"}
+AUDIO_EXT = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".opus", ".amr", ".aiff"}
+DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".markdown", ".csv", ".tsv",
+           ".json", ".jsonl", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg",
+           ".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".vue", ".html", ".css", ".scss",
+           ".sql", ".sh", ".bash", ".bat", ".ps1", ".java", ".go", ".rs", ".php", ".rb",
+           ".swift", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".r", ".lua", ".pl", ".tex"}
+ARCHIVE_EXT = {".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz"}
+LEGACY_OFFICE = {".doc", ".xls", ".ppt", ".rtf", ".odt", ".ods", ".odp", ".epub"}
 
 THEMES = [
     {"id": "dark_ink", "name": "深色墨黑", "v": {"bg": "#121417", "panel": "#1b1f25", "panel2": "#232830",
@@ -861,9 +867,42 @@ def classify(ext: str) -> str:
         return "video"
     if ext in AUDIO_EXT:
         return "audio"
+    if ext in ARCHIVE_EXT:
+        return "archive"
     if ext in DOC_EXT:
         return "doc"
     return "other"
+
+
+DANGEROUS_INLINE = {".html", ".htm", ".svg", ".xml", ".xhtml", ".js", ".mjs", ".css"}
+
+
+def archive_listing(path: pathlib.Path) -> str:
+    """只列文件名，不解压，避免 zip 炸弹与路径穿越。"""
+    if path.suffix.lower() != ".zip":
+        return ""
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+        head = names[:30]
+        more = "" if len(names) <= 30 else f"…（共 {len(names)} 项）"
+        return "压缩包内文件：\n" + "\n".join(head) + ("\n" + more if more else "")
+    except Exception:
+        return ""
+
+
+def convert_heic(path: pathlib.Path) -> pathlib.Path | None:
+    """HEIC/HEIF 转 JPEG；没有 pillow-heif 时返回 None。"""
+    try:
+        from pillow_heif import register_heif_opener
+        from PIL import Image
+        register_heif_opener()
+        out = path.with_suffix(".jpg")
+        Image.open(path).convert("RGB").save(out, "JPEG", quality=88)
+        return out
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------- 图像
@@ -2372,12 +2411,31 @@ async def upload(request: Request):
     fid = "f-" + uuid.uuid4().hex[:12]
     target = UPLOADS / (fid + ext)
     target.write_bytes(raw)
+    if ext in (".heic", ".heif"):
+        conv = convert_heic(target)
+        if conv is not None:
+            try:
+                target.unlink()
+            except Exception:
+                pass
+            target = conv
+            ext = ".jpg"
+            mime = "image/jpeg"
+            raw_name = pathlib.Path(raw_name).stem + ".jpg"
     kind = classify(ext)
     text, note = "", ""
-    if kind == "doc":
+    if ext in LEGACY_OFFICE:
+        kind = "doc"
+        note = "旧版/特殊 Office 格式，可下载后用 Office 或 WPS 打开；另存为 docx/xlsx/pptx 可在线预览"
+    elif kind == "doc":
         text = extract_text(target)
         if not text.strip():
             note = "未提取到文本，可下载查看"
+    elif kind == "archive":
+        text = archive_listing(target)
+        note = "压缩包仅列文件名，不解压；下载后本地解压"
+        if not text:
+            note = "该压缩格式不支持在线查看，请下载后解压"
     elif kind == "other":
         note = "仅支持预览与下载"
     conn = db()
@@ -2395,9 +2453,14 @@ async def download(fid: str, inline: int = 0):
     row = _file_row(fid)
     if row is None:
         raise HTTPException(404, "不存在")
-    return FileResponse(row["path"], media_type=row["mime"] or "application/octet-stream",
-                        filename=row["name"],
-                        content_disposition_type="inline" if inline else "attachment")
+    mime = row["mime"] or "application/octet-stream"
+    ext = pathlib.Path(row["name"]).suffix.lower()
+    allow_inline = bool(inline) and mime == "application/pdf" and ext == ".pdf"
+    if not allow_inline:
+        mime = "application/octet-stream"
+    return FileResponse(row["path"], media_type=mime, filename=row["name"],
+                        content_disposition_type="inline" if allow_inline else "attachment",
+                        headers={"X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/api/files/{fid}/text")
@@ -2405,7 +2468,11 @@ async def file_text(fid: str):
     row = _file_row(fid)
     if row is None:
         raise HTTPException(404, "不存在")
-    body = extract_text(pathlib.Path(row["path"])) if row["kind"] == "doc" else ""
+    body = ""
+    if row["kind"] == "doc":
+        body = extract_text(pathlib.Path(row["path"]))
+    elif row["kind"] == "archive":
+        body = archive_listing(pathlib.Path(row["path"]))
     return {"name": row["name"], "kind": row["kind"], "text": body[:8000],
             "truncated": len(body) > 8000}
 
@@ -2464,9 +2531,13 @@ async def media(fid: str, request: Request):
     row = _file_row(fid)
     if row is None:
         raise HTTPException(404, "不存在")
+    if row["kind"] not in ("image", "video", "audio"):
+        raise HTTPException(404, "该文件请用下载方式获取")
     path = pathlib.Path(row["path"])
     size = path.stat().st_size
     mime = row["mime"] or "application/octet-stream"
+    if not mime.startswith(("image/", "video/", "audio/")):
+        mime = "application/octet-stream"
     rng = request.headers.get("range")
     if not rng:
         return FileResponse(path, media_type=mime,
