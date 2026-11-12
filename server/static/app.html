@@ -1451,6 +1451,7 @@ function renderMsg(m){
     var t = esc(c.text);
     if(mentions.length) t = t.replace(/@([^\s]+)/g, '<span style="color:var(--accent)">@$1</span>');
     html += t;
+    if(c.edited) html += '<span style="font-size:10.5px;color:var(--dim);margin-left:4px">(已编辑)</span>';
   }
   var _imgIds = {};
   (c.images||[]).forEach(function(r){ _imgIds[String(r||'').split('/').pop()]=1; });
