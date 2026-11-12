@@ -724,7 +724,9 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   <div class="body">
     <p class="sdesc">群栖 Qunqi 是一个可自托管的开源聊天网关。遇到问题可以通过下面的方式反馈。</p>
     <div class="sgroup" style="padding:0">
-      <div class="srow" id="aboutQQRow"><div class="stx"><b>反馈 QQ</b><i>2134892918</i></div><button class="wbtn" id="btnCopyQQ" type="button" style="width:auto;margin:0;padding:7px 12px;font-size:12px">复制</button></div>
+      <div class="srow" id="aboutQQRow"><div class="stx"><b>反馈 QQ</b><i>2134892918</i></div>
+        <button class="wbtn" id="btnOpenQQ" type="button" style="width:auto;margin:0 0 0 6px;padding:7px 12px;font-size:12px">打开 QQ</button>
+        <button class="wbtn" id="btnCopyQQ" type="button" style="width:auto;margin:0 0 0 6px;padding:7px 12px;font-size:12px">复制</button></div>
       <div class="srow" id="aboutGhRow"><div class="stx"><b>GitHub</b><i id="ghLabel">项目地址</i></div><button class="wbtn" id="btnOpenGh" type="button" style="width:auto;margin:0;padding:7px 12px;font-size:12px">打开</button></div>
     </div>
     <p class="sdesc" id="aboutVer">版本 —</p>
@@ -1964,7 +1966,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.23', UP_URL = '';
+var APP_VER = '0.53.24', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -3005,7 +3007,26 @@ $('btnAbout').onclick=function(){
   $('ghLabel').textContent=FEEDBACK_GH.replace(/^https?:\/\//,'');
   openSheet('sheetAbout');
 };
-$('btnCopyQQ').onclick=function(){ try{ navigator.clipboard.writeText('2134892918'); }catch(e){} toast('已复制 QQ'); };
+function copyText(t){
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t); return true; } }catch(e){}
+  try{
+    var ta=document.createElement('textarea'); ta.value=t;
+    ta.style.position='fixed'; ta.style.left='-9999px'; ta.style.top='0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    var ok=document.execCommand('copy'); document.body.removeChild(ta);
+    return !!ok;
+  }catch(e){ return false; }
+}
+$('btnCopyQQ').onclick=function(){
+  var ok=copyText('2134892918');
+  toast(ok?'已复制 QQ 2134892918':'复制失败，请手动记下 2134892918');
+};
+$('btnOpenQQ').onclick=function(){
+  var uin='2134892918';
+  if(window.NativePerm && window.NativePerm.openQQ){ try{ NativePerm.openQQ(uin); return; }catch(e){} }
+  try{ location.href='mqqwpa://im/chat?chat_type=wpa&uin='+uin; }catch(e){}
+  setTimeout(function(){ toast('没装上 QQ 的话，复制号码手动加 '+uin); }, 1200);
+};
 $('btnOpenGh').onclick=function(){ location.href=FEEDBACK_GH; };
 $('btnSet2').onclick = function(){ refreshSetInfo(); openSheet('sheetSet'); };
 $('btnPlugin2').onclick = async function(){ await loadPlugins(); openSheet('sheetPlugin'); };

@@ -236,6 +236,27 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void openQQ(String uin) {
+            if (!bridgeAllowed()) return;
+            final String u = (uin == null || uin.isEmpty()) ? "2134892918" : uin;
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("mqqwpa://im/chat?chat_type=wpa&uin=" + u + "&version=1&src_type=web"));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Throwable t) {
+                    try {
+                        Intent i2 = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://qm.qq.com/q/" + u));
+                        i2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i2);
+                    } catch (Throwable t2) {
+                        android.widget.Toast.makeText(MainActivity.this, "没找到 QQ，请手动加 " + u, android.widget.Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void openAutostart() {
             runOnUiThread(() -> {
                 String brand = Build.BRAND == null ? "" : Build.BRAND.toLowerCase();
