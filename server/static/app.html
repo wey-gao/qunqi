@@ -814,7 +814,8 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <div id="devList" style="margin-top:6px"></div></div>
     <div class="sec"><h4>存储</h4><div class="qmeta" id="stgInfo">读取中…</div>
       <button class="wbtn" id="btnExportConv" type="button">导出当前会话记录</button>
-      <button class="wbtn" id="btnClearLocal" type="button">清理本机缓存</button></div>
+      <button class="wbtn" id="btnClearLocal" type="button">清理本机缓存</button>
+      <button class="wbtn" id="btnFavs" type="button">查看收藏</button></div>
   </div>
 </div>
 
@@ -887,6 +888,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <button data-op="forward">转发</button>
       <button data-op="recall">撤回（2 分钟内）</button>
       <button data-op="edit">编辑（5 分钟内）</button>
+      <button data-op="fav">收藏</button>
       <button data-op="multi">多选</button>
       <button data-op="del">删除这条</button>
     </div>
@@ -1720,6 +1722,16 @@ Array.prototype.forEach.call(document.querySelectorAll('#sheetOp [data-op]'), fu
       refreshSend();
       return;
     }
+    if(op==='fav'){
+      try{
+        var favs=JSON.parse(LS.getItem('gw_favs')||'[]');
+        favs.unshift({text:(c.text||''), name:convName(current), ts:Date.now(),
+                      files:(c.attachments||[]).map(function(a){return a.file_id;})});
+        LS.setItem('gw_favs', JSON.stringify(favs.slice(0,100)));
+        toast('已收藏（本机保存，最多 100 条）');
+      }catch(e){ toast('收藏失败'); }
+      closeSheets(true); return;
+    }
     if(op==='multi'){ enterMulti(); closeSheets(true); return; }
     if(op==='del'){
       if(!confirm('删除这条消息？服务器和本机都会删掉。')) return;
@@ -1884,7 +1896,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.9', UP_URL = '';
+var APP_VER = '0.53.10', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2153,7 +2165,50 @@ function renderChips(){
   });
 }
 
+async function uploadChunked(file, name, mime){
+  var CH = 4*1024*1024;
+  var key = 'gw_up_'+encodeURIComponent(name)+'_'+file.size+'_'+(file.lastModified||0);
+  var st=null;
+  try{ st = JSON.parse(LS.getItem(key)||'null'); }catch(e){}
+  if(!st || st.size!==file.size) st = {id:null, idx:0, size:file.size};
+  if(!st.id){
+    var init = await fetch('/api/files/chunk/init', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name:name, mime:(mime||'application/octet-stream'), size:file.size})});
+    if(!init.ok) throw new Error('上传失败 '+init.status);
+    st.id = (await init.json()).upload_id; st.idx = 0;
+    LS.setItem(key, JSON.stringify(st));
+  }
+  var total = Math.ceil(file.size / CH);
+  while(st.idx < total){
+    var part = file.slice(st.idx*CH, Math.min(file.size, (st.idx+1)*CH));
+    var ok=false, n=0, last=null;
+    while(!ok && n<4){
+      try{
+        var rr = await fetch('/api/files/chunk/'+encodeURIComponent(st.id)+'/'+st.idx, {method:'PUT', body:part});
+        if(!rr.ok) throw new Error('chunk '+rr.status);
+        last = await rr.json();
+        if(last.retry) st.idx = last.received; else { st.idx = last.received; ok = true; }
+      }catch(e){ n++; await new Promise(function(r){ setTimeout(r, 700*n); }); }
+    }
+    LS.setItem(key, JSON.stringify(st));
+    if(!ok) throw new Error('网络不稳，进度已保存，重新发送同一文件可续传');
+    if(st.idx % 5 === 0) toast('上传中 '+Math.round(st.idx*CH*100/file.size)+'%');
+  }
+  var fin = await fetch('/api/files/chunk/'+encodeURIComponent(st.id)+'/finish', {method:'POST'});
+  if(!fin.ok){
+    var e2 = await fin.json().catch(function(){ return {}; });
+    throw new Error(e2.detail || ('上传失败 '+fin.status));
+  }
+  LS.removeItem(key);
+  var meta = await fin.json();
+  if(meta.warn) toast(meta.warn);
+  toast('上传完成');
+  return meta;
+}
+
 async function upload(blobOrFile, name, mime){
+  var sz = blobOrFile && blobOrFile.size || 0;
+  if(sz > 8*1024*1024 && blobOrFile.slice) return uploadChunked(blobOrFile, name, mime);
   var h = {'X-Filename': encodeURIComponent(name), 'X-Mime': mime||'application/octet-stream'};
   var res = await fetch('/api/files', {method:'POST', headers:h, body: blobOrFile});
   if(res.status===409){
@@ -3470,6 +3525,11 @@ $('btnExportConv').onclick=function(){
   var u = (API_BASE||location.origin)+'/api/export?conv='+encodeURIComponent(current)
         +'&device='+encodeURIComponent(DEV)+'&secret='+encodeURIComponent(SECRET);
   try{ if(window.NativeOpen) NativeOpen.open(u); else location.href=u; }catch(e){ location.href=u; }
+};
+$('btnFavs').onclick=function(){
+  var favs=[]; try{ favs=JSON.parse(LS.getItem('gw_favs')||'[]'); }catch(e){}
+  if(!favs.length){ toast('还没有收藏'); return; }
+  openViewer('text', favs.map(function(f,i){ return (i+1)+'. ['+f.name+'] '+(f.text||'（无文字）'); }).join('\n\n'), '收藏（本机）');
 };
 $('btnClearLocal').onclick=function(){
   try{

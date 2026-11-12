@@ -23,6 +23,7 @@ import os
 import pathlib
 import re
 import secrets
+import threading
 import socket
 import importlib.util
 import sqlite3
@@ -41,10 +42,11 @@ from fastapi.responses import FileResponse, JSONResponse
 BASE = pathlib.Path(__file__).resolve().parent
 DATA = BASE / "data"
 UPLOADS = DATA / "uploads"
+CHUNKS = DATA / "chunks"
 THUMBS = DATA / "thumbs"
 PLUGIN_PATH = BASE / "plugins"
 STATIC = BASE / "static"
-for p in (DATA, UPLOADS, THUMBS, PLUGIN_PATH):
+for p in (DATA, UPLOADS, THUMBS, CHUNKS, PLUGIN_PATH):
     p.mkdir(parents=True, exist_ok=True)
 DB = DATA / "chat.db"
 
@@ -2637,6 +2639,54 @@ def _apk_sha() -> dict:
     return info
 
 
+def store_file(raw: bytes, name: str, mime: str, is_admin_user: bool, warn: str):
+    raw_name = pathlib.Path(name).name
+    ext = pathlib.Path(raw_name).suffix.lower()[:10]
+    if STRICT_MAGIC and magic_mismatch(ext, raw[:16]):
+        raise HTTPException(415, "文件内容与扩展名不符，请检查后重试")
+    fid = "f-" + uuid.uuid4().hex[:12]
+    target = UPLOADS / (fid + ext)
+    target.write_bytes(raw)
+    if ext in (".heic", ".heif"):
+        conv = convert_heic(target)
+        if conv is not None:
+            try:
+                target.unlink()
+            except Exception:
+                pass
+            target = conv
+            ext = ".jpg"
+            mime = "image/jpeg"
+            raw_name = pathlib.Path(raw_name).stem + ".jpg"
+    kind = classify(ext)
+    text, note = "", ""
+    if ext in LEGACY_OFFICE:
+        kind = "doc"
+        note = "旧版/特殊 Office 格式，可下载后用 Office 或 WPS 打开；另存为 docx/xlsx/pptx 可在线预览"
+    elif kind == "doc":
+        text = extract_text(target)
+        if not text.strip():
+            note = "未提取到文本，可下载查看"
+    elif kind == "archive":
+        text = archive_listing(target)
+        note = "压缩包仅列文件名，不解压；下载后本地解压"
+        if not text:
+            note = "该压缩格式不支持在线查看，请下载后解压"
+    elif kind == "other":
+        note = "仅支持预览与下载"
+    conn = db()
+    conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (fid, raw_name, mime, kind, len(raw), str(target), len(text), note, int(time.time() * 1000)))
+    conn.commit()
+    conn.close()
+    meta = file_meta(_file_row(fid))
+    meta["text"] = text[:6000]
+    meta["admin"] = is_admin_user
+    if warn:
+        meta["warn"] = warn
+    return meta
+
+
 @app.post("/api/files")
 async def upload(request: Request):
     device = request.headers.get("x-device") or request.query_params.get("device", "")
@@ -2692,51 +2742,79 @@ async def upload(request: Request):
                                 % (used / 1024 / 1024))
         warn = (warn + "；" if warn else "") + "管理员越权：总存储将超出 %d MB 配额" % (MAX_TOTAL // 1024 // 1024)
 
-    raw_name = pathlib.Path(name).name
-    ext = pathlib.Path(raw_name).suffix.lower()[:10]
-    if STRICT_MAGIC and magic_mismatch(ext, raw[:16]):
-        raise HTTPException(415, "文件内容与扩展名不符，请检查后重试")
-    fid = "f-" + uuid.uuid4().hex[:12]
-    target = UPLOADS / (fid + ext)
-    target.write_bytes(raw)
-    if ext in (".heic", ".heif"):
-        conv = convert_heic(target)
-        if conv is not None:
-            try:
-                target.unlink()
-            except Exception:
-                pass
-            target = conv
-            ext = ".jpg"
-            mime = "image/jpeg"
-            raw_name = pathlib.Path(raw_name).stem + ".jpg"
-    kind = classify(ext)
-    text, note = "", ""
-    if ext in LEGACY_OFFICE:
-        kind = "doc"
-        note = "旧版/特殊 Office 格式，可下载后用 Office 或 WPS 打开；另存为 docx/xlsx/pptx 可在线预览"
-    elif kind == "doc":
-        text = extract_text(target)
-        if not text.strip():
-            note = "未提取到文本，可下载查看"
-    elif kind == "archive":
-        text = archive_listing(target)
-        note = "压缩包仅列文件名，不解压；下载后本地解压"
-        if not text:
-            note = "该压缩格式不支持在线查看，请下载后解压"
-    elif kind == "other":
-        note = "仅支持预览与下载"
-    conn = db()
-    conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
-                 (fid, raw_name, mime, kind, len(raw), str(target), len(text), note, int(time.time() * 1000)))
-    conn.commit()
-    conn.close()
-    meta = file_meta(_file_row(fid))
-    meta["text"] = text[:6000]
-    meta["admin"] = is_admin_user
-    if warn:
-        meta["warn"] = warn
-    return meta
+    return store_file(raw, name, mime, is_admin_user, warn)
+
+
+_CHUNK_LOCK = threading.Lock()
+_CHUNK_META = {}
+
+
+@app.post("/api/files/chunk/init")
+async def chunk_init(request: Request):
+    body = await request.json()
+    uid = require_device(request.headers.get("x-device") or request.query_params.get("device") or body.get("device", ""))
+    name = str(body.get("name") or "file.bin")
+    mime = str(body.get("mime") or "application/octet-stream")
+    size = int(body.get("size") or 0)
+    if size <= 0:
+        raise HTTPException(400, "文件大小不正确")
+    if not is_admin(uid) and size > MAX_UPLOAD:
+        raise HTTPException(413, "超过大小上限 %d MB" % (MAX_UPLOAD // 1024 // 1024))
+    up_id = "u-" + uuid.uuid4().hex[:12]
+    part = CHUNKS / (up_id + ".part")
+    with _CHUNK_LOCK:
+        _CHUNK_META[up_id] = {"name": name, "mime": mime, "size": size, "received": 0,
+                              "bytes": 0, "path": str(part), "uid": int(uid)}
+    return {"upload_id": up_id, "received": 0}
+
+
+@app.put("/api/files/chunk/{up_id}/{idx}")
+async def chunk_put(up_id: str, idx: int, request: Request):
+    require_device(request.headers.get("x-device") or request.query_params.get("device", ""))
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(400, "空分片")
+    with _CHUNK_LOCK:
+        meta = _CHUNK_META.get(up_id)
+        if meta is None:
+            raise HTTPException(404, "上传任务不存在或已过期")
+        if idx != meta["received"]:
+            return {"received": meta["received"], "retry": True}
+        with open(meta["path"], "ab") as f:
+            f.write(raw)
+        meta["received"] += 1
+        meta["bytes"] += len(raw)
+        return {"received": meta["received"], "bytes": meta["bytes"]}
+
+
+@app.post("/api/files/chunk/{up_id}/finish")
+async def chunk_finish(up_id: str, request: Request):
+    device = request.headers.get("x-device") or request.query_params.get("device", "")
+    uid = require_device(device)
+    with _CHUNK_LOCK:
+        meta = _CHUNK_META.pop(up_id, None)
+    if meta is None:
+        raise HTTPException(404, "上传任务不存在或已过期")
+    part = pathlib.Path(meta["path"])
+    if not part.exists():
+        raise HTTPException(404, "分片文件丢失，请重新上传")
+    raw = part.read_bytes()
+    try:
+        part.unlink()
+    except Exception:
+        pass
+    if len(raw) != meta["size"]:
+        raise HTTPException(400, "分片未传完：%d/%d 字节" % (len(raw), meta["size"]))
+    if not is_admin(uid) and meta["size"] > MAX_UPLOAD:
+        raise HTTPException(413, "超过大小上限")
+    try:
+        used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
+    except Exception:
+        used = 0
+    warn = ""
+    if used + len(raw) >= MAX_TOTAL:
+        raise HTTPException(507, "服务器存储已满")
+    return store_file(raw, meta["name"], meta["mime"], is_admin(uid), warn)
 
 
 @app.get("/api/files/{fid}")
