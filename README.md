@@ -20,13 +20,7 @@
 
 ## 界面
 
-| 聊天 | 侧栏 |
-|---|---|
-| ![聊天](docs/screenshots/chat.png) | ![侧栏](docs/screenshots/sidebar.png) |
-
-| 设置 | 群信息 |
-|---|---|
-| ![设置](docs/screenshots/settings.png) | ![群信息](docs/screenshots/group.png) |
+界面随版本迭代调整，首次启动需要先填写自己的服务器地址。
 
 ## 30 秒部署
 
