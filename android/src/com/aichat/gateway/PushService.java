@@ -27,6 +27,7 @@ public class PushService extends Service {
     static final String CH_MSG = "qunqi_msg";
     static final int ID_SVC = 9001;
     private static final int INTERVAL = 15000;
+    private static final int MAX_INTERVAL = 120000;
     private volatile boolean running = false;
     private Thread worker;
 
@@ -78,6 +79,8 @@ public class PushService extends Service {
     private void startWorker() {
         worker = new Thread(() -> {
             SharedPreferences p = prefs(this);
+            int wait = INTERVAL;
+            boolean hadNews = false;
             while (running) {
                 try {
                     String dev = p.getString("device", "");
@@ -103,14 +106,19 @@ public class PushService extends Service {
                     JSONArray arr = d.optJSONArray("items");
                     long mx = d.optLong("max_ts", since);
                     if (mx > 0) p.edit().putLong("since", mx).apply();
-                    if (arr != null && arr.length() > 0 && !MainActivity.isVisible()) {
+                    hadNews = (arr != null && arr.length() > 0);
+                    if (hadNews && !MainActivity.isVisible()) {
                         for (int i = Math.max(0, arr.length() - 3); i < arr.length(); i++) {
                             JSONObject m = arr.getJSONObject(i);
                             notifyMsg(m.optString("conv_name", "新消息"), m.optString("text", ""), m.optString("conv", ""));
                         }
                     }
-                } catch (Throwable ignored) {}
-                try { Thread.sleep(INTERVAL); } catch (InterruptedException e) { break; }
+                    if (hadNews) wait = INTERVAL;
+                } catch (Throwable ignored) {
+                    hadNews = false;
+                }
+                if (!hadNews) wait = Math.min(wait * 2, MAX_INTERVAL);
+                try { Thread.sleep(wait); } catch (InterruptedException e) { break; }
             }
         }, "qunqi-push");
         worker.setDaemon(true);

@@ -1257,7 +1257,7 @@ function attHtml(a){
       return '<div class="stk" data-view="'+esc(a.file_id)+'" data-title="'+esc(a.name)+'"><img src="/media/'+esc(a.file_id)+'" alt="表情"></div>';
     }
     return '<div class="imgbox" data-view="'+esc(a.file_id)+'" data-title="'+esc(a.name)+'">'+
-      '<img src="/media/'+esc(a.file_id)+'" alt="'+esc(a.name)+'"></div>';
+      '<img loading="lazy" src="/thumb/'+esc(a.file_id)+'?w=480" data-full="/media/'+esc(a.file_id)+'" alt="'+esc(a.name)+'"></div>';
   }
   if(a.kind==='video'){
     return '<div class="vidbox" data-vid="'+esc(a.file_id)+'">'+
@@ -1420,7 +1420,10 @@ function renderMsg(m){
         var mime = b64.indexOf('R0lGOD')===0 ? 'image/gif' : (b64.indexOf('iVBOR')===0 ? 'image/png' : 'image/jpeg');
         src = 'data:'+mime+';base64,'+b64;
       }
-      return '<div class="imgbox"><img src="'+esc(src)+'" alt="图片" loading="lazy"></div>';
+      var _m = src.match(/^\/media\/([^\/?#]+)/);
+      var _fid = _m ? _m[1] : '';
+      return '<div class="imgbox" data-view="'+esc(_fid)+'" data-full="'+esc(src)+'" data-title="图片">'+
+        '<img src="'+esc(_fid?('/thumb/'+_fid+'?w=480'):src)+'" data-full="'+esc(src)+'" alt="图片" loading="lazy"></div>';
     }).join('')+'</div>';
   }
   if(!mine && c.agent) html += '<span class="tag">AGENT</span>';
@@ -1525,8 +1528,11 @@ function bindPreview(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function(el){
     if(el._b) return; el._b=1;
     el.onclick = function(){
-      var id = el.dataset.view;
-      openViewer('image', '/media/'+id, el.dataset.title||'图片', '/api/files/'+id);
+      var id = el.dataset.view || '';
+      var im = el.querySelector('img');
+      var full = el.dataset.full || (im && im.dataset ? im.dataset.full : '') || '';
+      var dl = id ? ('/api/files/'+id) : '';
+      openViewer('image', full||('/media/'+id), el.dataset.title||'图片', dl);
     };
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-text]'), function(el){
@@ -1799,7 +1805,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.2', UP_URL = '';
+var APP_VER = '0.53.4', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){

@@ -60,6 +60,13 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 AGENT_WEBHOOK = os.getenv("AGENT_WEBHOOK", "")
 PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
 GATEWAY_TOKEN = os.getenv("GATEWAY_TOKEN", "")
+# 安全强度开关：自用默认宽松，对外公开时设 SECURITY_LEVEL=public 全开
+SECURITY_LEVEL = os.getenv("SECURITY_LEVEL", "private").strip().lower()
+PUBLIC_MODE = SECURITY_LEVEL == "public"
+STRICT_MAGIC = os.getenv("STRICT_FILE_MAGIC", "1" if PUBLIC_MODE else "0") == "1"
+ADMIN_CONFIRM = os.getenv("ADMIN_CONFIRM", "1" if PUBLIC_MODE else "0") == "1"
+PUSH_REQUIRE_SECRET = os.getenv("PUSH_REQUIRE_SECRET", "1" if PUBLIC_MODE else "0") == "1"
+
 MAX_UPLOAD = int(os.getenv("MAX_UPLOAD_MB", "300")) * 1024 * 1024
 MAX_TOTAL = int(os.getenv("MAX_TOTAL_MB", "2048")) * 1024 * 1024
 UPLOAD_PER_MIN = int(os.getenv("UPLOAD_PER_MIN", "20"))
@@ -67,7 +74,7 @@ _up_rl: dict = {}
 
 app = FastAPI(title="AI Chat Gateway")
 
-SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api/status", "/api/restore", "/api/me"}
+SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api/status", "/api/restore"}
 
 
 @app.middleware("http")
@@ -75,6 +82,9 @@ async def secret_guard(request: Request, call_next):
     """知道 device id 不够，还得有设备密钥；AI 的 device=bot 额外要 BOT_TOKEN。"""
     path = request.url.path
     if not path.startswith("/api") or path in SECRET_EXEMPT:
+        return await call_next(request)
+    if path == "/api/me" and not PUBLIC_MODE:
+        # 自用模式：缺密钥也能读资料，但接口不返回 secret
         return await call_next(request)
     device = request.query_params.get("device") or ""
     secret = request.headers.get("x-device-secret") or ""
@@ -387,7 +397,7 @@ def secret_of(device_id: str) -> str:
     return (row["secret"] if row else "") or ""
 
 
-def device_profile(device_id: str, name: str = "", kind: str = "user") -> dict:
+def device_profile(device_id: str, name: str = "", kind: str = "user", with_secret: bool = False) -> dict:
     """没有账号密码：device id 决定一个稳定的数字 uid，昵称可改。"""
     device_id = (device_id or "").strip()[:64]
     if device_id in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
@@ -429,8 +439,11 @@ def device_profile(device_id: str, name: str = "", kind: str = "user") -> dict:
     except Exception:
         av = ""
     code, kind2 = ident_of(device_id, kind)
-    return {"device_id": device_id, "uid": uid, "name": nick, "code": code, "kind": kind2,
-            "admin": is_admin(uid), "secret": ensure_secret(device_id), "avatar": av}
+    out = {"device_id": device_id, "uid": uid, "name": nick, "code": code, "kind": kind2,
+           "admin": is_admin(uid), "avatar": av}
+    if with_secret:
+        out["secret"] = ensure_secret(device_id)
+    return out
 
 
 def uid_name(uid: int) -> str:
@@ -863,6 +876,49 @@ def extract_text(path: pathlib.Path) -> str:
         return body
     except Exception as exc:
         return f"[解析失败：{type(exc).__name__}]"
+
+
+MAGIC_RULES = {
+    "png": (b"\x89PNG",), "jpg": (b"\xff\xd8\xff",), "gif": (b"GIF8",),
+    "bmp": (b"BM",), "tiff": (b"II*\x00", b"MM\x00*"),
+    "zip": (b"PK\x03\x04",), "rar": (b"Rar!",), "7z": (b"7z\xbc\xaf",),
+    "gz": (b"\x1f\x8b",), "bz2": (b"BZh",), "xz": (b"\xfd7zXZ",),
+    "pdf": (b"%PDF",), "ole": (b"\xd0\xcf\x11\xe0",),
+    "mkv": (b"\x1aE\xdf\xa3",), "ogg": (b"OggS",), "flac": (b"fLaC",),
+    "mp3": (b"ID3", b"\xff\xfb", b"\xff\xf3"), "amr": (b"#!AMR",),
+    "aac": (b"\xff\xf1", b"\xff\xf9"), "wav": (b"RIFF",), "webp": (b"RIFF",),
+    "aiff": (b"FORM",), "ico": (b"\x00\x00\x01\x00",),
+    "rtf": (b"{\\rtf",),
+}
+MAGIC_BY_EXT = {
+    ".png": "png", ".jpg": "jpg", ".jpeg": "jpg", ".jfif": "jpg", ".gif": "gif",
+    ".bmp": "bmp", ".tif": "tiff", ".tiff": "tiff", ".webp": "webp", ".ico": "ico",
+    ".pdf": "pdf", ".zip": "zip", ".docx": "zip", ".xlsx": "zip", ".pptx": "zip",
+    ".odt": "zip", ".ods": "zip", ".odp": "zip", ".epub": "zip",
+    ".rar": "rar", ".7z": "7z", ".gz": "gz", ".tgz": "gz", ".bz2": "bz2", ".xz": "xz",
+    ".doc": "ole", ".xls": "ole", ".ppt": "ole", ".rtf": "rtf",
+    ".mkv": "mkv", ".webm": "mkv", ".ogg": "ogg", ".opus": "ogg", ".flac": "flac",
+    ".mp3": "mp3", ".amr": "amr", ".aac": "aac", ".wav": "wav", ".aiff": "aiff",
+    ".mp4": "mp4", ".m4v": "mp4", ".mov": "mp4", ".3gp": "mp4",
+}
+
+
+def magic_mismatch(ext: str, head: bytes) -> bool:
+    """按文件头判断扩展名是否在造假；文本、未知类型一律放行。"""
+    key = MAGIC_BY_EXT.get(ext)
+    if not key:
+        return False
+    if key == "mp4":
+        return not (len(head) >= 12 and head[4:8] == b"ftyp")
+    if key == "tiff":
+        return not (head.startswith(b"II*\x00") or head.startswith(b"MM\x00*"))
+    if key == "wav":
+        return not (head.startswith(b"RIFF") and head[8:12] == b"WAVE")
+    if key == "webp":
+        return not (head.startswith(b"RIFF") and head[8:12] == b"WEBP")
+    if key == "aiff":
+        return not (head.startswith(b"FORM") and head[8:12] == b"AIFF")
+    return not any(head.startswith(sig) for sig in MAGIC_RULES[key])
 
 
 def classify(ext: str) -> str:
@@ -1557,18 +1613,77 @@ async def broadcast_conv_update() -> None:
 
 
 async def broadcast_all(payload: dict) -> None:
+    """并发下发并设置超时，避免某个卡死的连接拖住整个请求。"""
+    msg = json.dumps(payload, ensure_ascii=False)
+    jobs = []
     for wss in list(clients.values()):
         for ws in list(wss):
-            try:
-                await ws.send_text(json.dumps(payload, ensure_ascii=False))
-            except Exception:
-                wss.discard(ws)
+            jobs.append((wss, ws, asyncio.wait_for(ws.send_text(msg), timeout=2)))
+    if not jobs:
+        return
+    results = await asyncio.gather(*[j[2] for j in jobs], return_exceptions=True)
+    for (wss, ws, _), res in zip(jobs, results):
+        if isinstance(res, Exception):
+            wss.discard(ws)
 
 
 # ---------------------------------------------------------------- 路由
+async def retention_loop():
+    days = int(os.getenv("MSG_RETENTION_DAYS", "0") or 0)
+    if days <= 0:
+        return
+    while True:
+        try:
+            cutoff = int(time.time() * 1000) - days * 86400000
+            conn = db()
+            n = conn.execute("DELETE FROM message WHERE ts < ?", (cutoff,)).rowcount
+            conn.commit()
+            conn.close()
+            if n:
+                log(f"过期清理：删除 {n} 条超过 {days} 天的消息")
+        except Exception as exc:
+            log(f"过期清理失败：{type(exc).__name__}")
+        await asyncio.sleep(6 * 3600)
+
+
+async def bot_watchdog():
+    if os.getenv("ASTRBOT_WATCHDOG", "1") != "1":
+        return
+    fail = 0
+    while True:
+        await asyncio.sleep(30)
+        try:
+            if getattr(bot, "online", False):
+                fail = 0
+                continue
+            fail += 1
+            if fail < 3:
+                continue
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "-u", os.getenv("ASTRBOT_USER", "ecs-user"), "env",
+                "XDG_RUNTIME_DIR=/run/user/1000", "systemctl", "--user", "restart", "astrbot",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await proc.wait()
+            log("看门狗：AstrBot 失联超过 90 秒，已尝试重启")
+            fail = 0
+        except Exception as exc:
+            log(f"看门狗异常：{type(exc).__name__}")
+
+
 @app.on_event("startup")
 async def startup():
     init_db()
+    # 历史设备可能没有密钥，会让鉴权中间件放行；启动时补齐
+    try:
+        conn = db()
+        rows = conn.execute("SELECT device_id FROM device WHERE device_id!='bot' AND (secret IS NULL OR secret='')").fetchall()
+        conn.close()
+        for r in rows:
+            ensure_secret(r["device_id"])
+        if rows:
+            log(f"已为 {len(rows)} 台历史设备补齐密钥")
+    except Exception as exc:
+        log(f"补齐设备密钥失败：{type(exc).__name__}")
     resolve_admin_codes()
     try:
         load_plugins()
@@ -1586,6 +1701,16 @@ async def startup():
             set_setting("ui", st0)
             set_setting("theme_light_migrated", True)
             log("默认主题已切换为浅色")
+    except Exception:
+        pass
+    # 消息过期清理（默认关闭，MSG_RETENTION_DAYS=30 开启）
+    try:
+        asyncio.create_task(retention_loop())
+    except Exception:
+        pass
+    # AstrBot 失联看门狗（ASTRBOT_WATCHDOG=0 可关闭）
+    try:
+        asyncio.create_task(bot_watchdog())
     except Exception:
         pass
     await bot.start()
@@ -1818,7 +1943,7 @@ async def api_device(request: Request):
         raise HTTPException(429, "注册过于频繁")
     _up_rl[key] = (win[0], win[1] + 1)
     body = await request.json()
-    prof = device_profile(body.get("device_id", ""), body.get("name", ""), body.get("kind", "user"))
+    prof = device_profile(body.get("device_id", ""), body.get("name", ""), body.get("kind", "user"), with_secret=True)
     return prof
 
 
@@ -2070,9 +2195,12 @@ async def api_conv_bg(cid: str, request: Request):
 
 
 @app.get("/api/push/poll")
-async def push_poll(device: str = "", since: int = 0):
+async def push_poll(request: Request, device: str = "", since: int = 0):
     """给终端做后台消息轮询：只返回该设备用户所在会话里、别人发的新消息。"""
-    uid = require_device(device)
+    if PUSH_REQUIRE_SECRET:
+        uid, _ = require_req_device(request, device)
+    else:
+        uid = require_device(device)
     conn = db()
     rows = conn.execute("SELECT * FROM conv WHERE deleted_at=0").fetchall()
     convs = {}
@@ -2181,8 +2309,18 @@ async def api_ban(request: Request):
 
 
 @app.get("/api/me")
-async def api_me(device: str = "", kind: str = "user"):
-    return device_profile(device, "", kind)
+async def api_me(request: Request, device: str = "", kind: str = "user"):
+    """已注册设备必须带密钥；未注册设备允许首次自助注册并下发密钥。"""
+    if not device:
+        raise HTTPException(400, "缺少 device")
+    if secret_of(device):
+        try:
+            require_req_device(request, device)
+        except HTTPException:
+            if PUBLIC_MODE:
+                raise
+        return device_profile(device, "", kind)
+    return device_profile(device, "", kind, with_secret=True)
 
 
 @app.post("/api/restore")
@@ -2212,7 +2350,7 @@ async def api_restore(request: Request):
         conn.close()
         raise HTTPException(404, "身份码没有对应设备")
     new_dev = (body.get("device_id") or "").strip()[:64]
-    prof = device_profile(old_dev, "", "user")
+    prof = device_profile(old_dev, "", "user", with_secret=True)
     if new_dev and new_dev != old_dev:
         ex = conn.execute("SELECT * FROM device WHERE device_id=?", (new_dev,)).fetchone()
         if ex:
@@ -2229,7 +2367,7 @@ async def api_restore(request: Request):
                      (new_dev, code, "user", int(time.time())))
         conn.commit()
         conn.close()
-        prof = device_profile(new_dev, "", "user")
+        prof = device_profile(new_dev, "", "user", with_secret=True)
         prof["code"] = code
     else:
         conn.close()
@@ -2491,20 +2629,22 @@ async def upload(request: Request):
     if len(raw) > MAX_UPLOAD:
         if not is_admin_user:
             raise HTTPException(413, "超过大小上限 %d MB" % (MAX_UPLOAD // 1024 // 1024))
-        if request.headers.get("x-admin-confirm") != "1":
+        if ADMIN_CONFIRM and request.headers.get("x-admin-confirm") != "1":
             raise HTTPException(409, "该文件 %.1f MB，超过普通上限 %d MB。管理员可继续上传，请确认后再发一次"
                                 % (len(raw) / 1024 / 1024, MAX_UPLOAD // 1024 // 1024))
         warn = "管理员越权上传：%.1f MB 已超过普通上限 %d MB" % (len(raw) / 1024 / 1024, MAX_UPLOAD // 1024 // 1024)
     if not is_admin_user and used + len(raw) >= MAX_TOTAL:
         raise HTTPException(507, "服务器存储已满")
     if is_admin_user and used + len(raw) >= MAX_TOTAL:
-        if request.headers.get("x-admin-confirm") != "1":
+        if ADMIN_CONFIRM and request.headers.get("x-admin-confirm") != "1":
             raise HTTPException(409, "存储已用 %.0f MB，本次上传会超出总配额，管理员可继续，请确认"
                                 % (used / 1024 / 1024))
         warn = (warn + "；" if warn else "") + "管理员越权：总存储将超出 %d MB 配额" % (MAX_TOTAL // 1024 // 1024)
 
     raw_name = pathlib.Path(name).name
     ext = pathlib.Path(raw_name).suffix.lower()[:10]
+    if STRICT_MAGIC and magic_mismatch(ext, raw[:16]):
+        raise HTTPException(415, "文件内容与扩展名不符，请检查后重试")
     fid = "f-" + uuid.uuid4().hex[:12]
     target = UPLOADS / (fid + ext)
     target.write_bytes(raw)
