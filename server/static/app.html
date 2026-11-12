@@ -1964,7 +1964,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.22', UP_URL = '';
+var APP_VER = '0.53.23', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2967,13 +2967,15 @@ $('btnNotif').onclick = function(){
   openSheet('sheetNotif');
 };
 $('btnAskNotif').onclick = function(){
-  if(!window.NativePerm){ toast('当前环境不支持'); return; }
-  NativePerm.request();
+  if(!window.NativePerm){ toast('当前环境不支持，请用群栖 App 打开'); return; }
+  try{ NativePerm.request(); }catch(e){ toast('打开系统设置失败：'+e); return; }
   setTimeout(function(){
     var st = nativePermStatus() || {};
     $('notifDetail').textContent = '通知：' + (st.notif ? '已允许' : '未允许') + '　省电白名单：' + (st.battery ? '已加入' : '未加入');
     refreshNotifRow();
-  }, 800);
+    if(st.notif && st.battery){ toast('通知与省电白名单都已就绪'); }
+    else if(!st.battery){ toast('如未跳到设置页，请手动在系统设置里允许后台运行'); }
+  }, 1800);
 };
 $('btnAskAuto').onclick = function(){ if(window.NativePerm) NativePerm.openAutostart(); };
 refreshNotifRow();

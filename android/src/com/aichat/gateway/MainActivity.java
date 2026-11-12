@@ -167,6 +167,38 @@ public class MainActivity extends Activity {
         loadLocalPage();
     }
 
+
+    /* 省电白名单跳转：部分 ROM 屏蔽 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS，
+       逐级退到“省电策略列表页”再到“应用详情”，保证点了一定有反应 */
+    private void openBatteryWhitelist() {
+        if (Build.VERSION.SDK_INT < 23) {
+            android.widget.Toast.makeText(this, "当前系统版本无需设置省电白名单", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                android.widget.Toast.makeText(this, "已经在不受限制名单里，无需再设置", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+        } catch (Throwable ignored) {}
+        Intent[] tries = new Intent[]{
+                new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        .setData(android.net.Uri.parse("package:" + getPackageName())),
+                new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(android.net.Uri.parse("package:" + getPackageName()))
+        };
+        for (Intent it : tries) {
+            try {
+                it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(it);
+                return;
+            } catch (Throwable ignored) {}
+        }
+        android.widget.Toast.makeText(this, "打不开省电设置，请手动在系统设置 > 应用 > 群栖 里允许后台运行", android.widget.Toast.LENGTH_LONG).show();
+    }
+
     /* 原生录音：WebView 在 http 源下拿不到 getUserMedia，改由原生录 m4a 再回传 base64 */
     class PermBridge {
         @JavascriptInterface
@@ -185,16 +217,21 @@ public class MainActivity extends Activity {
             if (!bridgeAllowed()) return;
             runOnUiThread(() -> {
                 try {
-                    if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                    boolean needNotif = false;
+                    try {
+                        needNotif = Build.VERSION.SDK_INT >= 33
+                                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED;
+                    } catch (Throwable ignored) {}
+                    if (needNotif) {
+                        // 先弹通知授权，再跳省电白名单，避免两个系统界面互相顶掉
                         requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1010);
+                        web.postDelayed(() -> openBatteryWhitelist(), 1200);
+                    } else {
+                        openBatteryWhitelist();
                     }
-                    android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
-                    if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                        Intent i = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                        i.setData(android.net.Uri.parse("package:" + getPackageName()));
-                        startActivity(i);
-                    }
-                } catch (Throwable ignored) {}
+                } catch (Throwable t) {
+                    android.widget.Toast.makeText(MainActivity.this, "打开系统设置失败，请手动设置", android.widget.Toast.LENGTH_SHORT).show();
+                }
             });
         }
 
@@ -238,9 +275,13 @@ public class MainActivity extends Activity {
             if (u == null) return false;
             if (u.startsWith("file:")) return true;
             String host = android.net.Uri.parse(u).getHost();
-            if (host == null || DEFAULT_URL.isEmpty()) return false;
-            String allow = android.net.Uri.parse(DEFAULT_URL).getHost();
-            return allow != null && host.equalsIgnoreCase(allow);
+            if (host == null) return false;
+            if (host.equalsIgnoreCase("qunqi.local")) return true;
+            // 内置页 base 可能是注入地址，也可能是用户自己填的网关；两者都要放行
+            String allow = DEFAULT_URL.isEmpty() ? null : android.net.Uri.parse(DEFAULT_URL).getHost();
+            String localHost = LOCAL_URL.isEmpty() ? null : android.net.Uri.parse(LOCAL_URL).getHost();
+            if (allow != null && host.equalsIgnoreCase(allow)) return true;
+            return localHost != null && host.equalsIgnoreCase(localHost);
         } catch (Throwable t) {
             return false;
         }
@@ -261,12 +302,8 @@ public class MainActivity extends Activity {
                         .setTitle("让通知不掉线")
                         .setMessage("系统省电策略可能会杀掉后台轮询。把群栖加入“不限制耗电”名单，后台消息才稳定。")
                         .setPositiveButton("去设置", (d, w) -> {
-                            try {
-                                sp.edit().putString("bat_asked", "1").apply();
-                                Intent it = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                                it.setData(android.net.Uri.parse("package:" + getPackageName()));
-                                startActivity(it);
-                            } catch (Throwable ignored) {}
+                            sp.edit().putString("bat_asked", "1").apply();
+                            openBatteryWhitelist();
                         })
                         .setNegativeButton("暂不", (d, w) -> sp.edit().putString("bat_asked", "1").apply())
                         .show();
