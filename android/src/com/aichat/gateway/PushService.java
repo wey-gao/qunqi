@@ -78,10 +78,10 @@ public class PushService extends Service {
 
     private void startWorker() {
         worker = new Thread(() -> {
-            SharedPreferences p = prefs(this);
             int wait = INTERVAL;
             boolean hadNews = false;
             while (running) {
+                SharedPreferences p = prefs(this);
                 try {
                     String dev = p.getString("device", "");
                     String base = p.getString("base", "");
@@ -96,7 +96,14 @@ public class PushService extends Service {
                     c.setConnectTimeout(8000);
                     c.setReadTimeout(8000);
                     if (secret.length() > 0) c.setRequestProperty("X-Device-Secret", secret);
-                    BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
+                    int code = c.getResponseCode();
+                    if (code == 401 || code == 403) {
+                        c.disconnect();
+                        notifyRelogin();
+                        running = false;
+                        break;
+                    }
+                    BufferedReader br = new BufferedReader(new InputStreamReader(code >= 400 ? c.getErrorStream() : c.getInputStream(), "UTF-8"));
                     StringBuilder sb = new StringBuilder();
                     String line;
                     while ((line = br.readLine()) != null) sb.append(line);
@@ -124,6 +131,19 @@ public class PushService extends Service {
         }, "qunqi-push");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private void notifyRelogin() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            Notification n = new Notification.Builder(this, Build.VERSION.SDK_INT >= 26 ? CH_MSG : null)
+                    .setContentTitle("群栖：登录已失效")
+                    .setContentText("打开 App 输入身份码恢复登录，否则收不到新消息")
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setAutoCancel(true)
+                    .build();
+            nm.notify(4099, n);
+        } catch (Throwable ignored) {}
     }
 
     private void notifyMsg(String title, String body, String conv) {

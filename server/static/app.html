@@ -1958,7 +1958,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.16', UP_URL = '';
+var APP_VER = '0.53.17', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2002,6 +2002,32 @@ function softReload(){
   setTimeout(function(){ try{ connect(); }catch(e){} }, 120);
 }
 
+var _reloginShown=false;
+function needRelogin(msg){
+  if(_reloginShown) return;
+  _reloginShown=true;
+  try{ if(ws){ ws.onclose=null; ws.close(); } }catch(e){}
+  setState(false,'需要重新登录');
+  try{ toast(msg||'登录已失效，请重新登录'); }catch(e){}
+  setTimeout(function(){
+    _reloginShown=false;
+    if($('codeInputOb')) $('codeInputOb').value='';
+    if($('sheetCode')) openSheet('sheetCode');
+    else if(typeof openOnboard==='function') openOnboard();
+  }, 600);
+}
+
+var hbTimer=null, lastPong=0;
+function startHeartbeat(){
+  lastPong=Date.now();
+  if(hbTimer) clearInterval(hbTimer);
+  hbTimer=setInterval(function(){
+    if(!ws || ws.readyState!==1) return;
+    if(Date.now()-lastPong>70000){ try{ ws.close(); }catch(e){} return; }
+    try{ ws.send(JSON.stringify({t:'ping'})); }catch(e){}
+  }, 25000);
+}
+
 function connect(){
   if(!API_BASE){ setTimeout(function(){ if($('srvInput')) $('srvInput').value=''; openSheet('sheetServer'); }, 150); return; }
   var proto = 'ws', host = location.host || '';
@@ -2016,6 +2042,7 @@ function connect(){
     var f; try{ f=JSON.parse(ev.data); }catch(e){ return; }
     if(f.t==='auth_ok'){
       retry=0; setState(true,'在线');
+      startHeartbeat();
       try{ if(window.NativePush && SECRET) NativePush.start(DEV, SECRET, API_BASE || location.origin); }catch(e){}
       try{ outboxFlush(); }catch(e){}
 
@@ -2101,11 +2128,16 @@ function connect(){
     } else if(f.t==='conv_bg'){
       CONVS.forEach(function(c){ if(c.id===f.conv) c.bg=f.bg; });
       if(current===f.conv) applyState();
+    } else if(f.t==='pong'){
+      lastPong=Date.now();
     } else if(f.t==='error'){
-      toast(f.msg||'出错了');
+      var _m=f.msg||'出错了';
+      toast(_m);
+      if(/密钥|未注册|重新登录/.test(_m)){ needRelogin(_m); }
     }
   };
-  ws.onclose = function(){
+  ws.onclose = function(ev){
+    if(ev && (ev.code===4403 || ev.code===4401)){ needRelogin('登录已失效'); return; }
     setState(false,'重连中'); retry=Math.min(retry+1,10);
     var wait = Math.min(500*Math.pow(1.6,retry), 30000);
     setTimeout(connect, wait + Math.random()*800);
