@@ -1160,6 +1160,13 @@ var HIDE_CONV = '';
 var JOIN_CODE = (location.search.match(/[?&]join=([A-Za-z0-9]+)/)||location.hash.match(/join=([A-Za-z0-9]+)/)||[])[1] || '';
 var TK = (location.search.match(/[?&]token=([^&]+)/)||[])[1] || LS.getItem('gw_token') || '';
 if(TK) LS.setItem('gw_token', TK);
+try{
+  if(/[?&]token=/.test(location.search) && history.replaceState){
+    var u = new URL(location.href);
+    u.searchParams.delete('token');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  }
+}catch(e){}
 (function(){
   var raw = window.fetch;
   window.fetch = function(u, o){
@@ -1935,7 +1942,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.13', UP_URL = '';
+var APP_VER = '0.53.12', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
