@@ -246,6 +246,34 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean batAsked = false;
+    private void askBatteryWhitelist() {
+        if (batAsked || Build.VERSION.SDK_INT < 23) return;
+        if ("1".equals(sp.getString("bat_asked", ""))) return;
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+        } catch (Throwable ignored) {}
+        batAsked = true;
+        runOnUiThread(() -> {
+            try {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("让通知不掉线")
+                        .setMessage("系统省电策略可能会杀掉后台轮询。把群栖加入“不限制耗电”名单，后台消息才稳定。")
+                        .setPositiveButton("去设置", (d, w) -> {
+                            try {
+                                sp.edit().putString("bat_asked", "1").apply();
+                                Intent it = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                                it.setData(android.net.Uri.parse("package:" + getPackageName()));
+                                startActivity(it);
+                            } catch (Throwable ignored) {}
+                        })
+                        .setNegativeButton("暂不", (d, w) -> sp.edit().putString("bat_asked", "1").apply())
+                        .show();
+            } catch (Throwable ignored) {}
+        });
+    }
+
     class PushBridge {
         @JavascriptInterface
         public void start(String device, String secret, String base) {
@@ -259,6 +287,7 @@ public class MainActivity extends Activity {
                 if (p.getLong("since", 0) <= 0) p.edit().putLong("since", System.currentTimeMillis()).apply();
                 Intent i = new Intent(MainActivity.this, PushService.class);
                 if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
+                askBatteryWhitelist();
             } catch (Throwable ignored) {}
         }
 

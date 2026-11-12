@@ -660,6 +660,16 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   </div>
 </div>
 
+<div class="sheet" id="sheetRole">
+  <header><b>怎么用群栖</b></header>
+  <div class="sbody">
+    <p class="sdesc">两种用法选一个，之后可以在设置里换。</p>
+    <button class="obbtn" id="roleOwner" type="button">我自己开服务器</button>
+    <p class="obhint">需要一台云服务器，跑网关后群、消息、文件都存在你自己机器上，你当管理员。</p>
+    <button class="obbtn" id="roleMember" type="button">我只加入别人的群聊</button>
+    <p class="obhint">填对方的网关地址就行，群由群主拉你进去，不用自己部署。</p>
+  </div>
+</div>
 <div class="sheet" id="sheetOnboard">
   <header><b>设置你的资料</b></header>
   <div class="sbody">
@@ -816,7 +826,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <div id="devList" style="margin-top:6px"></div></div>
     <div class="sec"><h4>存储</h4><div class="qmeta" id="stgInfo">读取中…</div>
       <button class="wbtn" id="btnExportConv" type="button">导出当前会话记录</button>
-      <button class="wbtn" id="btnClearLocal" type="button">清理本机缓存</button>
+      <button class="wbtn" id="btnClearDrafts" type="button">清理草稿与待发送</button>
       <button class="wbtn" id="btnFavs" type="button">查看收藏</button></div>
   </div>
 </div>
@@ -944,7 +954,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 
 <div class="sheet" id="sheetRecord">
   <header><b>转发的聊天记录</b><button class="close" data-close>×</button></header>
-  <div class="body"><div id="recList"></div></div>
+  <div class="body"><div id="recMrg"></div></div>
 </div>
 
 <div class="sheet" id="sheetConv">
@@ -1063,8 +1073,6 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 </div>
 
 <input type="file" id="pickerPhoto" accept="image/*" hidden>
-<input type="file" id="pickerCam" accept="image/*" capture="environment" hidden>
-<input type="file" id="pickerAvatar" accept="image/*" hidden>
 <input type="file" id="pickerMyAvatar" accept="image/*" hidden>
 <input type="file" id="pickerBg" accept="image/*" hidden><input type="file" id="pickerGroupBg" accept="image/*" hidden>
 
@@ -1934,7 +1942,7 @@ $('btnClearConv').onclick=async function(){
 $('btnClearLocal').onclick=async function(){
   if(!confirm('清理本地缓存？服务器消息不会删除，下次会重新拉取。')) return;
   try{ indexedDB.deleteDatabase('aichat'); }catch(e){}
-  toast('本地缓存已清理'); setTimeout(function(){ location.reload(); }, 800);
+  toast('本地缓存已清理'); setTimeout(function(){ softReload(); }, 800);
 };
 
 /* 合并记录查看 */
@@ -1942,7 +1950,7 @@ document.addEventListener('click', function(e){
   var el=e.target.closest && e.target.closest('[data-mrg]');
   if(!el) return;
   var items=MRGS[el.dataset.mrg]||[];
-  $('recList').innerHTML=items.map(function(x){
+  $('recMrg').innerHTML=items.map(function(x){
     return '<div class="recitem"><b>'+esc(x.name||'')+' · '+(x.ts?fmtTime(new Date(x.ts)):'')+'</b><div>'+esc(x.text||'')+'</div></div>';
   }).join('') || '<div class="qmeta">记录为空</div>';
   openSheet('sheetRecord');
@@ -1955,7 +1963,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.19', UP_URL = '';
+var APP_VER = '0.53.20', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2067,7 +2075,10 @@ function connect(){
       if(SYS && SYS.ai_hidden && current === 'u'+ME.uid && CONVS.length) current = CONVS[0].id;
       if(f.conv && f.conv!==current && (String(f.conv).charAt(0)==='g' || f.conv==='u'+ME.uid)){ current = f.conv; }
       renderConvs(); applyState(); renderThemes(); loadHistory();
-      if(LS.getItem('gw_onboarded')!=='1'){ setTimeout(function(){ if(NEED_SRV) openSheet('sheetServer'); else openOnboard(); }, 120); }
+      if(LS.getItem('gw_onboarded')!=='1'){ setTimeout(function(){
+        if(!LS.getItem('gw_role') && !SAVED_SRV) return openRole();
+        if(NEED_SRV) openSheet('sheetServer'); else openOnboard();
+      }, 120); }
       try{
         fetch('/api/read?device='+encodeURIComponent(DEV)).then(function(r){return r.json();}).then(function(dd){
           var got = (dd&&dd.reads)||{};
@@ -2804,7 +2815,8 @@ $('btnSrvReset').onclick=function(){
 $('btnProfLogout').onclick=function(){
   if(!confirm('退出后本机需要重新进入，服务器聊天记录仍在。')) return;
   try{ localStorage.removeItem('gw_secret'); localStorage.removeItem('gw_token'); localStorage.removeItem('gw_onboarded'); }catch(e){}
-  location.reload();
+  try{ localStorage.removeItem('gw_role'); }catch(e){}
+  softReload();
 };
 Array.prototype.forEach.call(document.querySelectorAll('.avpv .pv'), function(el){
   el.onclick=function(){
@@ -3714,7 +3726,7 @@ function renderFavs(){
     };
   });
 }
-$('btnClearLocal').onclick=function(){
+$('btnClearDrafts').onclick=function(){
   try{
     Object.keys(LS._k||{}).forEach(function(k){ if(k.indexOf('gw_draft_')===0) LS.removeItem(k); });
     LS.removeItem('gw_outbox');
@@ -3724,6 +3736,23 @@ $('btnClearLocal').onclick=function(){
 
 /* ============ 首次设置昵称 / 头像，跨设备继承 ============ */
 var OB_AVATAR = '';
+function openRole(){
+  try{ closeSheets(true); }catch(e){}
+  if($('sheetRole')) openSheet('sheetRole');
+}
+$('roleOwner').onclick=function(){
+  try{ LS.setItem('gw_role','owner'); }catch(e){}
+  closeSheets(true);
+  if(INJECTED || !FILE_MODE){ openOnboard(); }
+  else { toast('先填你自己服务器的地址'); openSheet('sheetServer'); }
+};
+$('roleMember').onclick=function(){
+  try{ LS.setItem('gw_role','member'); }catch(e){}
+  closeSheets(true);
+  if($('srvInput')) $('srvInput').value='';
+  toast('填对方的网关地址，例如 http://1.2.3.4:8099');
+  openSheet('sheetServer');
+};
 function openOnboard(){ openSheet('sheetOnboard'); $('obName').value = (ME && ME.name && !/^访客/.test(ME.name)) ? ME.name : ''; }
 $('obAv').onclick=function(){ $('pickerAvatar').click(); };
 $('pickerAvatar').onchange=async function(){
