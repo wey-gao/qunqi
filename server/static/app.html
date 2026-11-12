@@ -714,9 +714,9 @@ body.tdeco-seal .sheet .body{padding-bottom:64px}
 .av .pv img,.av img{transform:scale(var(--avScale,1));transform-origin:center}
 
 /* ===== 有背景图时聊天区透出一点壁纸，但保证文字可读 ===== */
-body.hasbg #list{background:color-mix(in srgb,var(--bg) 86%,transparent)!important}
-body.hasbg.dark #list{background:color-mix(in srgb,var(--bg) 84%,transparent)!important}
-body.hasbg #composer{background:color-mix(in srgb,var(--panel) 88%,transparent)!important}
+body.hasbg #list{background:transparent!important}
+body.hasbg.dark #list{background:transparent!important}
+body.hasbg #composer{background:color-mix(in srgb,var(--panel) 74%,transparent)!important}
 
 /* 背景图要能被看见：body 不铺不透明底色，交给 #bg 与 html */
 html,body{background:var(--bg)}
@@ -1186,6 +1186,7 @@ body.hasbg{background:transparent!important}
       <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
       <div class="sld"><label>背景角度</label><input type="range" id="bgRot" min="0" max="180" step="1"><output id="bgRotV"></output></div>
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
+      <button class="wbtn" id="btnBgZero" type="button">图片位置一键归零</button>
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
       <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
       <button class="wbtn" id="btnPureWhite" type="button">一键纯白简约</button>
@@ -1569,8 +1570,11 @@ function applyBgOnly(){
   bgEl.style.filter = (_b===1 && _bl===0) ? 'none'
     : ('brightness('+_b+')'+(_bl>0?(' blur('+_bl+'px)'):''));
   var ov=$('bgOverlay');
-  if(ov){ var lt = /^#(f|e|d|c)/i.test(((THEMES.filter(function(t){return t.id===S.theme;})[0]||{}).v||{}).bg||'');
-    ov.style.opacity = (lt ? 0 : (B.overlay||0)); }
+  if(ov){
+    var lt = /^#(f|e|d|c)/i.test(((THEMES.filter(function(t){return t.id===S.theme;})[0]||{}).v||{}).bg||'');
+    // 有图时遮罩完全由滑块决定，强制 1 才保留原色
+    ov.style.opacity = hasPic ? Number(B.overlay||0) : (lt ? 0 : Number(B.overlay||0));
+  }
 }
 function applyAvatarVars(){
   var r = document.documentElement.style;
@@ -2298,7 +2302,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.41', UP_URL = '';
+var APP_VER = '0.53.42', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
