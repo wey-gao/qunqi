@@ -20,8 +20,8 @@
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;overflow:hidden}
 #bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:translate(var(--bgX,0),var(--bgY,0)) scale(var(--bgZoom,1.02)) rotate(var(--bgRot,0deg)) translateZ(0);transform-origin:center}
-#bgOverlay{position:fixed;inset:0;z-index:-1;background:#05070a;opacity:.15;pointer-events:none}
-#app{display:flex;height:100dvh;position:relative}
+#bgOverlay{position:fixed;inset:0;z-index:0;background:#05070a;opacity:.15;pointer-events:none}
+#app{display:flex;height:100vh;height:100dvh;position:relative}
 
 #side{width:252px;flex:0 0 252px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 .brand{display:flex;align-items:center;gap:9px;padding:16px 16px 10px}
@@ -550,7 +550,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 
 
 /* ===== 主题风格层（18+ 套主题的差异化渲染） ===== */
-#texLayer{position:fixed;inset:0;z-index:-1;pointer-events:none;background-repeat:repeat;opacity:.55;mix-blend-mode:normal}
+#texLayer{position:fixed;inset:0;z-index:0;pointer-events:none;background-repeat:repeat;opacity:.55;mix-blend-mode:normal}
 body.tstyle-glass #side,body.tstyle-glass .sheet{background:color-mix(in srgb,var(--panel) 76%,transparent)!important;backdrop-filter:blur(22px) saturate(1.2);-webkit-backdrop-filter:blur(22px) saturate(1.2)}
 body.tstyle-glass #composer{background:color-mix(in srgb,var(--panel) 62%,transparent)!important;backdrop-filter:blur(20px) saturate(1.2);-webkit-backdrop-filter:blur(20px) saturate(1.2)}
 body.tstyle-glass .bub{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
@@ -669,7 +669,7 @@ body.tstyle-outline .conv.active{border:1px solid color-mix(in srgb,var(--accent
 .day{margin:14px 0 16px}
 
 /* ===== 交互性能：拖动阶段关闭重效果，只保留位移/亮度 ===== */
-#bg{will-change:auto;contain:paint}
+#bg{will-change:auto;contain:paint;z-index:0}
 body.dragsld #bg{transition:none!important}
 body.dragsld .sheet,body.dragsld #side,body.dragsld .emoji{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important}
 body.dragsld *{transition:none!important;animation:none!important}
@@ -683,6 +683,44 @@ body.dragsld *{transition:none!important;animation:none!important}
 .day::before,.day::after{content:"";width:24px;height:1px;background:color-mix(in srgb,var(--line) 85%,transparent);flex:0 0 auto}
 body.tstyle-glass .day{background:color-mix(in srgb,var(--panel) 60%,transparent)!important;padding:3px 10px!important;border-radius:10px;width:max-content;margin-left:auto;margin-right:auto}
 body.tstyle-glass .day::before,body.tstyle-glass .day::after{display:none}
+
+/* ===== 右侧面板只上下，不许左右 ===== */
+.sheet{touch-action:pan-y;overscroll-behavior-x:none}
+.sheet .body,.sheet .sec,.sheet .body *{overscroll-behavior-x:none}
+.sheet .body{overflow-x:hidden!important;touch-action:pan-y}
+.sheet .body .tgrid,.sheet .body .themeGrid{max-width:100%;overflow-x:hidden}
+.sheet{overflow-x:clip}
+/* 左栏拉出时，聊天区背景虚化 */
+body.sideopen #mask{background:rgba(10,14,20,.16);backdrop-filter:none}
+body.sideopen #main{filter:blur(2.5px) saturate(.9) brightness(.97);transition:filter .18s ease}
+/* 水墨印章不再压在正文右侧：改成无字圆印，且只占角落 */
+body.tdeco-seal .sheet::after{content:"";right:14px;bottom:14px;width:38px;height:38px;border-radius:50%;
+  background:radial-gradient(circle at 34% 32%, color-mix(in srgb,var(--accent) 42%,transparent),
+  color-mix(in srgb,var(--accent) 16%,transparent) 62%,transparent 72%);
+  border:1px solid color-mix(in srgb,var(--accent) 34%,transparent);opacity:.45;transform:none}
+body.tdeco-seal .sheet .body{padding-bottom:64px}
+
+/* ===== 头像取景：设置页直接拖 + 缩放裁切 ===== */
+.avcrop{display:flex;gap:16px;align-items:center;margin:12px 0 6px}
+.pvcrop{position:relative;width:104px;height:104px;flex:0 0 104px;border-radius:50%;overflow:hidden;
+  background:var(--panel2);border:1px solid var(--line);touch-action:none;cursor:grab}
+.pvcrop:active{cursor:grabbing}
+.pvcrop img{width:100%;height:100%;object-fit:cover;
+  object-position:var(--avX,50%) var(--avY,50%);
+  transform:scale(var(--avScale,1));transform-origin:center;display:block;pointer-events:none}
+.pvcrop .cropguide{position:absolute;inset:12px;border:1px dashed color-mix(in srgb,var(--dim) 55%,transparent);
+  border-radius:50%;pointer-events:none}
+.cropctl{flex:1;min-width:0}
+.av .pv img,.av img{transform:scale(var(--avScale,1));transform-origin:center}
+
+/* ===== 有背景图时聊天区透出一点壁纸，但保证文字可读 ===== */
+body.hasbg #list{background:color-mix(in srgb,var(--bg) 86%,transparent)!important}
+body.hasbg.dark #list{background:color-mix(in srgb,var(--bg) 84%,transparent)!important}
+body.hasbg #composer{background:color-mix(in srgb,var(--panel) 88%,transparent)!important}
+
+/* 背景图要能被看见：body 不铺不透明底色，交给 #bg 与 html */
+html{background:var(--bg)}
+body.hasbg{background:transparent!important}
 </style>
 </head>
 <body>
@@ -1129,10 +1167,14 @@ body.tstyle-glass .day::before,body.tstyle-glass .day::after{display:none}
       <p class="sdesc" id="aiAvatarTip" style="display:none">AI 头像由服务器管理员统一维护，你可以到左侧“我的资料”里改自己的头像。</p>
     </div>
     <div class="sec"><h4>头像取景（本机）</h4>
-      <p class="sdesc">调整头像显示的是画面哪一部分，只影响这台设备。</p>
-      <div class="sld"><label>取景 X</label><input type="range" id="avPx" min="0" max="100" step="1"><output id="avPxV"></output></div>
-      <div class="sld"><label>取景 Y</label><input type="range" id="avPy" min="0" max="100" step="1"><output id="avPyV"></output></div>
-      <div class="avpv"><div><div class="pv" id="pvMe2"></div><div class="lab">我的头像</div></div></div>
+      <p class="sdesc">在下面预览里直接拖动头像调整位置，滑块决定裁切多少；聊天里立刻生效，只影响这台设备。</p>
+      <div class="avcrop">
+        <div class="pvcrop" id="pvMe2"><span class="cropguide"></span></div>
+        <div class="cropctl">
+          <div class="sld"><label>裁切</label><input type="range" id="avZoom" min="100" max="220" step="5"><output id="avZoomV"></output></div>
+          <button class="wbtn" id="btnAvCropReset" type="button">重置取景</button>
+        </div>
+      </div>
     </div>
     <div class="sec"><h4>背景与文字</h4>
       <p class="sdesc">群聊背景由群内统一设置；这里调整的背景只在私聊生效。</p>
@@ -1411,8 +1453,7 @@ function applyState(){
   r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
 
   var B = curBg();
-  r.setProperty('--avX', Math.max(0, Math.min(100, Number(S.avatar.px==null?50:S.avatar.px)))+'%');
-  r.setProperty('--avY', Math.max(0, Math.min(100, Number(S.avatar.py==null?50:S.avatar.py)))+'%');
+  applyAvatarVars();
   var rot = Math.max(0, Math.min(180, Number(B.rotate||0)));
   var _vW = window.innerWidth||430, _vH = window.innerHeight||930;
   var _rad = rot*Math.PI/180, _c = Math.abs(Math.cos(_rad)), _sn = Math.abs(Math.sin(_rad));
@@ -1430,6 +1471,7 @@ function applyState(){
   var _b = Number(B.brightness||1), _bl = _drag ? 0 : Math.min(14, Number(B.blur||0));
   bgEl.style.filter = (_b===1 && _bl===0) ? 'none'
     : ('brightness('+_b+')'+(_bl>0?(' blur('+_bl+'px)'):''));
+  document.body.classList.toggle('hasbg', !!(B.url || B.gradient));
   var pv=$('bgPv');
   if(pv){
     pv.style.backgroundImage = S.bg.url ? 'url('+S.bg.url+')' : (S.bg.gradient ? 'linear-gradient(160deg,'+S.bg.gradient[0]+','+S.bg.gradient[1]+')' : 'none');
@@ -1509,6 +1551,12 @@ function applyBgOnly(){
   if(ov){ var lt = /^#(f|e|d|c)/i.test(((THEMES.filter(function(t){return t.id===S.theme;})[0]||{}).v||{}).bg||'');
     ov.style.opacity = (lt ? 0 : (B.overlay||0)); }
 }
+function applyAvatarVars(){
+  var r = document.documentElement.style;
+  r.setProperty('--avX', Math.max(0, Math.min(100, Number(S.avatar.px==null?50:S.avatar.px)))+'%');
+  r.setProperty('--avY', Math.max(0, Math.min(100, Number(S.avatar.py==null?50:S.avatar.py)))+'%');
+  r.setProperty('--avScale', String(Math.max(1, Math.min(2.4, Number(S.avatar.scale||1)))));
+}
 function applyLook(){
   var r = document.documentElement.style;
   r.setProperty('--fs', (S.font && S.font.size ? S.font.size : 15)+'px');
@@ -1516,6 +1564,7 @@ function applyLook(){
   r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
   var fc = S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'') ? S.font.color : '';
   if(fc) r.setProperty('--ink', fc);
+  applyAvatarVars();
 }
 var _lookPend=false;
 function applyLookSoon(){ if(_lookPend) return; _lookPend=true; requestAnimationFrame(function(){ _lookPend=false; applyLook(); }); }
@@ -1580,7 +1629,7 @@ function renderConvs(){
 function switchConv(id){
   try{ var old=current; if(old) saveDraftFor(old); }catch(e){}
   EDITSEQ=0;
-  if(id===current){ $('side').classList.remove('show'); $('mask').classList.remove('show'); return; }
+  if(id===current){ $('side').classList.remove('show'); $('mask').classList.remove('show'); document.body.classList.remove('sideopen'); return; }
   current = id;
   try{ loadDraft(); }catch(e){}
   if(String(id).charAt(0)==='g'){ refreshNamesForGroup(id); }
@@ -2217,7 +2266,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.33', UP_URL = '';
+var APP_VER = '0.53.34', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2958,8 +3007,7 @@ function syncMyAvatar(){
 
 function syncSheet(){
   $('avSize').value = S.avatar.size; $('avSizeV').textContent = S.avatar.size;
-  $('avPx').value = (S.avatar.px==null?50:S.avatar.px); $('avPxV').textContent = $('avPx').value;
-  $('avPy').value = (S.avatar.py==null?50:S.avatar.py); $('avPyV').textContent = $('avPy').value;
+  if($('avZoom')){ var _sc=Math.round((S.avatar.scale||1)*100); $('avZoom').value=_sc; $('avZoomV').textContent=_sc+'%'; }
   $('avBorder').value = S.avatar.border; $('avBorderV').textContent = S.avatar.border;
   $('bgBright').value = S.bg.brightness; $('bgBrightV').textContent = (+S.bg.brightness).toFixed(2);
   $('bgOverlayR').value = S.bg.overlay; $('bgOverlayV').textContent = (+S.bg.overlay).toFixed(2);
@@ -2987,10 +3035,34 @@ $('shapeOpt').onclick = function(e){
 };
 $('avSize').oninput = function(e){ S.avatar.size=+e.target.value; $('avSizeV').textContent=e.target.value; applyState(); };
 $('avSize').onchange = function(){ saveSettings({avatar:{size:S.avatar.size}}); };
-$('avPx').oninput = function(e){ S.avatar.px=+e.target.value; $('avPxV').textContent=e.target.value; applyState(); };
-$('avPx').onchange = function(){ saveSettings({avatar:{px:S.avatar.px}}); };
-$('avPy').oninput = function(e){ S.avatar.py=+e.target.value; $('avPyV').textContent=e.target.value; applyState(); };
-$('avPy').onchange = function(){ saveSettings({avatar:{py:S.avatar.py}}); };
+if($('avZoom')){
+  $('avZoom').oninput = function(e){ S.avatar.scale=Math.max(1,Math.min(2.4, (+e.target.value)/100)); $('avZoomV').textContent=e.target.value+'%'; applyAvatarVars(); };
+  $('avZoom').onchange = function(){ saveSettings({avatar:{scale:S.avatar.scale}}); };
+}
+if($('btnAvCropReset')){
+  $('btnAvCropReset').onclick = function(){ S.avatar.px=50; S.avatar.py=50; S.avatar.scale=1;
+    if($('avZoom')){ $('avZoom').value='100'; $('avZoomV').textContent='100%'; }
+    applyAvatarVars(); saveSettings({avatar:{px:50,py:50,scale:1}}); toast('取景已重置'); };
+}
+(function(){
+  var box=$('pvMe2'); if(!box) return;
+  var drag=null;
+  box.addEventListener('pointerdown', function(e){
+    drag={x:e.clientX, y:e.clientY, px:(S.avatar.px==null?50:S.avatar.px), py:(S.avatar.py==null?50:S.avatar.py)};
+    try{ box.setPointerCapture(e.pointerId); }catch(err){}
+    e.preventDefault();
+  });
+  box.addEventListener('pointermove', function(e){
+    if(!drag) return;
+    var sc=Math.max(1, Number(S.avatar.scale||1));
+    var k=100/Math.max(60, box.clientWidth)/sc;
+    S.avatar.px=Math.max(0,Math.min(100, drag.px - (e.clientX-drag.x)*k));
+    S.avatar.py=Math.max(0,Math.min(100, drag.py - (e.clientY-drag.y)*k));
+    applyAvatarVars();
+  });
+  function end(){ if(!drag) return; drag=null; saveSettings({avatar:{px:Math.round(S.avatar.px),py:Math.round(S.avatar.py)}}); }
+  box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+})();
 $('avBorder').oninput = function(e){ S.avatar.border=+e.target.value; $('avBorderV').textContent=e.target.value; applyState(); };
 $('avBorder').onchange = function(){ saveSettings({avatar:{border:S.avatar.border}}); };
 $('bgBright').oninput = function(e){ S.bg.brightness=+e.target.value; $('bgBrightV').textContent=(+e.target.value).toFixed(2); applyBgSoon(); };
@@ -3259,7 +3331,7 @@ async function loadPlugins(){
 var sheetOpen = false;
 function sheetUI(id){
   Array.prototype.forEach.call(document.querySelectorAll('.sheet'), function(x){ x.classList.remove('show'); });
-  $('side').classList.remove('show');
+  $('side').classList.remove('show'); document.body.classList.remove('sideopen');
   if(id){ $(id).classList.add('show'); $('mask').classList.add('show'); }
   else { $('mask').classList.remove('show'); }
 }
@@ -3381,7 +3453,7 @@ $('btnPlugin2').onclick = async function(){ await loadPlugins(); openSheet('shee
 $('btnPlugin').onclick = async function(){ await loadPlugins(); openSheet('sheetPlugin'); };
 $('menuBtn').onclick = function(){
   if($('side').classList.contains('show')){ closeSheets(true); }
-  else { $('side').classList.add('show'); $('mask').classList.add('show'); }
+  else { $('side').classList.add('show'); $('mask').classList.add('show'); document.body.classList.add('sideopen'); }
 };
 async function refreshConvs(){
   var r = await fetch('/api/convs?device='+encodeURIComponent(DEV));

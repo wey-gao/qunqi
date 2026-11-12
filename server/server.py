@@ -742,7 +742,7 @@ DEFAULT_UI = {
     "bg": {"url": "", "brightness": 1.0, "overlay": 0.15, "blur": 0,
            "x": 0, "y": 0, "zoom": 1.02, "rotate": 0},
     "avatar": {"url": "", "shape": "circle", "size": 44, "removeBg": False,
-               "border": 2, "borderColor": "#12b7f5", "px": 50, "py": 50},
+               "border": 2, "borderColor": "#12b7f5", "px": 50, "py": 50, "scale": 1.0},
     "bubble": {"radius": 14, "opacity": 1.0},
     "font": {"size": 15, "color": ""},
 }
@@ -2638,6 +2638,10 @@ async def put_settings(request: Request, device: str = ""):
     merge(st, body)
     st["avatar"]["size"] = max(28, min(64, int(st["avatar"]["size"])))
     st["avatar"]["shape"] = st["avatar"]["shape"] if st["avatar"]["shape"] in ("circle", "square") else "circle"
+    av = st["avatar"]
+    av["px"] = max(0, min(100, int(av.get("px", 50) or 50)))
+    av["py"] = max(0, min(100, int(av.get("py", 50) or 50)))
+    av["scale"] = max(1.0, min(2.4, float(av.get("scale", 1.0) or 1.0)))
     st["bg"]["brightness"] = max(0.2, min(1.3, float(st["bg"]["brightness"])))
     st["bg"]["overlay"] = max(0, min(0.9, float(st["bg"]["overlay"])))
     st["bg"]["blur"] = max(0, min(24, int(st["bg"]["blur"])))
