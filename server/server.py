@@ -2027,12 +2027,10 @@ async def get_settings():
 @app.put("/api/settings")
 async def put_settings(request: Request, device: str = ""):
     body = await request.json()
+    uid0, _ = require_req_device(request, device)
+    if not is_admin(int(uid0)):
+        raise HTTPException(403, "仅管理员可修改全站外观")
     st = ui_state()
-    if PUBLIC_MODE:
-        uid0 = uid_by_device(device) if device else None
-        if not (uid0 and is_admin(int(uid0))):
-            return {"ok": True, "settings": st, "unchanged": True,
-                    "ignored": "仅管理员可修改全站外观"}
 
     def merge(dst, src):
         for k, v in src.items():
@@ -2126,11 +2124,8 @@ async def del_theme(tid: str, device: str = "", request: Request = None):
 @app.get("/api/convs")
 async def get_convs(request: Request, device: str = ""):
     remember_host(request)
-    uid = 0
-    if device:
-        uid, _ = require_req_device(request, device)
-    if uid:
-        ensure_private(uid)
+    uid, _ = require_req_device(request, device)
+    ensure_private(uid)
     return {"items": conv_list(uid), "net": net_info()}
 
 
@@ -2287,10 +2282,7 @@ async def api_conv_bg(cid: str, request: Request):
 @app.get("/api/push/poll")
 async def push_poll(request: Request, device: str = "", since: int = 0):
     """给终端做后台消息轮询：只返回该设备用户所在会话里、别人发的新消息。"""
-    if PUSH_REQUIRE_SECRET:
-        uid, _ = require_req_device(request, device)
-    else:
-        uid = require_device(device)
+    uid, _ = require_req_device(request, device)
     conn = db()
     rows = conn.execute("SELECT * FROM conv WHERE deleted_at=0").fetchall()
     convs = {}
