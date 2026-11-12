@@ -1982,7 +1982,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.26', UP_URL = '';
+var APP_VER = '0.53.27', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2870,10 +2870,22 @@ $('bgPv').onclick = function(){
   if(S.bg.url) openViewer('image', S.bg.url, '背景预览', S.bg.url);
   else toast('当前是渐变背景，可上传图片替换');
 };
+function isAnimImage(f){ return !!(f && /image\/(gif|webp)/i.test(f.type || '') || /\.(gif|webp)$/i.test((f&&f.name)||'')); }
+
 $('btnUpBg').onclick = function(){ $('pickerBg').click(); };
-$('pickerBg').onchange = function(){
+$('pickerBg').onchange = async function(){
   var f=$('pickerBg').files[0]; if(!f) return;
   $('pickerBg').value='';
+  // GIF/WebP 动图直传，不进编辑器（进编辑器会被 canvas 压成静态首帧）
+  if(isAnimImage(f)){
+    try{
+      var meta0=await upload(f, f.name||('bg-'+Date.now()+'.webp'), f.type||'image/webp');
+      await saveSettings({bg:{url:'/media/'+meta0.file_id, gradient:null}});
+      applyState(); syncSheet();
+      toast('动态背景已更新');
+    }catch(e){ toast('背景上传失败'); }
+    return;
+  }
   var ratio = (window.innerWidth||430) / (window.innerHeight||930);   // 按屏幕比例裁
   openEditor(f, async function(meta){
     await saveSettings({bg:{url:'/media/'+meta.file_id}});
@@ -3251,9 +3263,23 @@ $('btnGroupBg').onclick = function(){
   if(!ME.admin){ toast('只有管理员可以更换群背景'); return; }
   $('pickerGroupBg').click();
 };
-$('pickerGroupBg').onchange = function(){
+$('pickerGroupBg').onchange = async function(){
   var f=$('pickerGroupBg').files[0]; if(!f) return;
   $('pickerGroupBg').value='';
+  // 群背景同样支持动图：动图直传，不动它
+  if(isAnimImage(f)){
+    try{
+      var metaA=await upload(f, f.name||('group-bg-'+Date.now()+'.webp'), f.type||'image/webp');
+      var rA=await fetch('/api/convs/'+encodeURIComponent(current)+'/bg',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({url:'/media/'+metaA.file_id, gradient:null, device:DEV})});
+      if(!rA.ok){ toast('设置失败：仅管理员可改'); return; }
+      var dA=await rA.json();
+      CONVS.forEach(function(c){ if(c.id===current) c.bg=dA.bg; });
+      applyState(); openGroupSheet(); toast('群动图背景已更新，全群生效');
+    }catch(e){ toast('群背景上传失败'); }
+    return;
+  }
   var ratio = (window.innerWidth||430)/(window.innerHeight||930);
   openEditor(f, async function(meta){
     var r = await fetch('/api/convs/'+encodeURIComponent(current)+'/bg',{method:'POST',
