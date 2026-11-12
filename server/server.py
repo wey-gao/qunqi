@@ -2448,6 +2448,12 @@ async def api_restore(request: Request):
                          (new_dev, old_row["uid"], old_row["name"], int(time.time()),
                           ensure_secret(new_dev), old_row["avatar"] if "avatar" in old_row.keys() else ""))
         conn.commit()
+        # 换机迁移：只保留当前这台设备，同 uid 的旧设备一并清掉，避免多台互相踢密钥
+        for r0 in conn.execute("SELECT device_id FROM device WHERE uid=? AND device_id<>?",
+                               (old_row["uid"], new_dev)).fetchall():
+            conn.execute("DELETE FROM device WHERE device_id=?", (r0["device_id"],))
+            conn.execute("DELETE FROM ident WHERE device_id=?", (r0["device_id"],))
+        conn.commit()
         # 身份码是唯一的：换机后把它从旧设备迁到新设备
         conn.execute("DELETE FROM ident WHERE device_id=? OR code=?", (new_dev, code))
         conn.execute("INSERT INTO ident (device_id,code,kind,created_at) VALUES (?,?,?,?)",
@@ -2456,6 +2462,8 @@ async def api_restore(request: Request):
         conn.close()
         prof = device_profile(new_dev, "", "user", with_secret=True)
         prof["code"] = code
+        # 恢复后必须把新设备当前的密钥发回去，否则客户端会继续拿旧密钥重连
+        prof["secret"] = ensure_secret(new_dev)
     else:
         conn.close()
     conn = db()
