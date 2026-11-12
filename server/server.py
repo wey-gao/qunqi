@@ -1661,22 +1661,9 @@ def parse_intent(text: str, has_image: bool = False) -> list:
     if any(k in t for k in ("去背", "抠掉背景", "透明底", "去掉背景", "只要主体")):
         acts.append({"type": "avatar.set", "payload": {"removeBg": True}})
 
-    if "黑白" in t:
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "mono_bw"}})
-    elif "赛博" in t:
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "cyber_blue"}})
-    elif any(k in t for k in ("可爱", "粉色", "樱花", "少女")):
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "sakura"}})
-    elif any(k in t for k in ("简约", "干净", "清爽")):
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "light_clean"}})
-    elif any(k in t for k in ("暗色", "暗黑", "黑底")):
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "dark_ink"}})
-    elif any(k in t for k in ("森林", "绿色")):
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "forest"}})
-    elif any(k in t for k in ("海洋", "深海", "蓝色")):
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "ocean"}})
-    elif any(k in t for k in ("复古", "终端", "极客")):
-        acts.append({"type": "theme.apply", "payload": {"theme_id": "retro_crt"}})
+    # 主题切换只走显式指令：AI 输出 <ui>{"actions":[{"type":"theme.apply",...}]}</ui>
+    # 或在设置页手动选。不再按聊天文本里的“蓝色/简约/樱花”等关键词猜主题——
+    # 聊天内容里出现颜色词会被误判为主题切换，行为不可控。
 
     if any(k in t for k in ("换壁纸", "换背景", "换个背景", "随机背景")):
         acts.append({"type": "bg.random"})
