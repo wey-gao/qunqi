@@ -2432,8 +2432,17 @@ async def api_me(request: Request, device: str = "", kind: str = "user"):
     if secret_of(device):
         require_req_device(request, device)
         return device_profile(device, "", kind)
-    # 设备号在服务端不存在：首次启动自动注册并下发一次密钥；
-    # 已存在且密钥不对的情况上面已抛出 403，不再凭设备号补发。
+    # 设备号在服务端不存在：首次启动自动注册并下发一次密钥。
+    # 与 /api/device 一样按 IP 限流，避免匿名刷库建号。
+    ip = request.client.host if request.client else "?"
+    now = int(time.time())
+    key = "me:" + ip
+    win = _up_rl.get(key) or (0, 0)
+    if now - win[0] >= 60:
+        win = (now, 0)
+    if win[1] >= 15:
+        raise HTTPException(429, "注册过于频繁")
+    _up_rl[key] = (now, win[1] + 1)
     return device_profile(device, "", kind, with_secret=True)
 
 
