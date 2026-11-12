@@ -146,6 +146,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new RecBridge(), "NativeRec");
         web.addJavascriptInterface(new PushBridge(), "NativePush");
         web.addJavascriptInterface(new PermBridge(), "NativePerm");
+        web.addJavascriptInterface(new ClipBridge(), "NativeClip");
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView v, android.webkit.ValueCallback<Uri[]> cb,
@@ -372,6 +373,38 @@ public class MainActivity extends Activity {
             try {
                 PushService.prefs(MainActivity.this).edit().putBoolean("dnd", on).apply();
             } catch (Throwable ignored) {}
+        }
+    }
+
+    /* 剪贴板桥：http 源下 navigator.clipboard 不可用，改由原生写系统剪贴板 */
+    class ClipBridge {
+        @android.webkit.JavascriptInterface
+        public boolean copy(String t) {
+            try {
+                final String txt = t == null ? "" : t;
+                Runnable r = () -> {
+                    try {
+                        android.content.ClipboardManager cm =
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("qunqi", txt));
+                    } catch (Exception ignored) {}
+                };
+                r.run();
+                return true;
+            } catch (Exception e) { return false; }
+        }
+        @android.webkit.JavascriptInterface
+        public String paste() {
+            try {
+                android.content.ClipboardManager cm =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm.hasPrimaryClip() && cm.getPrimaryClip() != null
+                        && cm.getPrimaryClip().getItemCount() > 0) {
+                    CharSequence cs = cm.getPrimaryClip().getItemAt(0).coerceToText(MainActivity.this);
+                    return cs == null ? "" : cs.toString();
+                }
+            } catch (Exception ignored) {}
+            return "";
         }
     }
 
