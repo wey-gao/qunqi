@@ -119,6 +119,7 @@ async def secret_guard(request: Request, call_next):
         request._receive = replay
         request._body = raw
     if device:
+        touch_device(device)
         if device in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
             if BOT_TOKEN and secret != BOT_TOKEN:
                 return JSONResponse({"detail": "AI 口令不正确"}, status_code=403)
@@ -2801,6 +2802,17 @@ async def chunk_init(request: Request):
         raise HTTPException(400, "文件大小不正确")
     if not is_admin(uid) and size > MAX_UPLOAD:
         raise HTTPException(413, "超过大小上限 %d MB" % (MAX_UPLOAD // 1024 // 1024))
+    # 清掉超过 2 小时的残留分片，避免断网任务堆积占盘
+    try:
+        now_ts = time.time()
+        for f in CHUNKS.glob("*.part"):
+            if now_ts - f.stat().st_mtime > 7200:
+                f.unlink(missing_ok=True)
+        for k, m in list(_CHUNK_META.items()):
+            if now_ts - pathlib.Path(m["path"]).stat().st_mtime > 7200:
+                _CHUNK_META.pop(k, None)
+    except Exception:
+        pass
     up_id = "u-" + uuid.uuid4().hex[:12]
     part = CHUNKS / (up_id + ".part")
     with _CHUNK_LOCK:
@@ -3006,12 +3018,23 @@ async def do_removebg(fid: str, request: Request):
     return file_meta(_file_row(new_id))
 
 
-def touch_device(dev: str) -> None:
+_TOUCH_CACHE = {}
+
+
+def touch_device(dev: str, force: bool = False) -> None:
     if not dev:
         return
+    now = int(time.time())
+    if not force and now - _TOUCH_CACHE.get(dev, 0) < 60:
+        return
+    _TOUCH_CACHE[dev] = now
+    if len(_TOUCH_CACHE) > 2000:
+        for k, v in list(_TOUCH_CACHE.items()):
+            if now - v > 3600:
+                _TOUCH_CACHE.pop(k, None)
     try:
         conn = db()
-        conn.execute("UPDATE device SET last_seen=? WHERE device_id=?", (int(time.time()), dev))
+        conn.execute("UPDATE device SET last_seen=? WHERE device_id=?", (now, dev))
         conn.commit(); conn.close()
     except Exception:
         pass
@@ -3051,6 +3074,14 @@ async def kick_device(dev: str, request: Request, device: str = ""):
     sec = "sk_" + secrets.token_urlsafe(24)
     conn.execute("UPDATE device SET secret=? WHERE device_id=?", (sec, dev))
     conn.commit(); conn.close()
+    # 密钥已轮换，同时断开该设备已建立的连接，否则下线要等它自己重连才生效
+    for socks in list(clients.values()):
+        for sock in list(socks):
+            if getattr(sock, "device", "") == dev:
+                try:
+                    asyncio.create_task(sock.close(code=4403))
+                except Exception:
+                    pass
     return {"ok": True}
 
 
@@ -3092,6 +3123,18 @@ async def export_conv(conv: str = "", device: str = "", limit: int = 5000):
                     headers={"Content-Disposition": "attachment; filename=qunqi-%s.json" % conv})
 
 
+def _age_seconds(ts) -> int:
+    """消息 ts 有的按毫秒存、有的按秒存，统一换算成“距今多少秒”。"""
+    try:
+        v = float(ts or 0)
+    except Exception:
+        return 0
+    now = time.time()
+    if v > 1e12:
+        return int(now - v / 1000)
+    return int(now - v)
+
+
 @app.post("/api/messages/{cid}/{seq}/recall")
 async def recall_message(cid: str, seq: int, request: Request, device: str = ""):
     uid = require_member(cid, device)
@@ -3101,7 +3144,7 @@ async def recall_message(cid: str, seq: int, request: Request, device: str = "")
         conn.close(); raise HTTPException(404, "消息不存在")
     if int(row["sender"] or 0) != int(uid) and not is_admin(uid):
         conn.close(); raise HTTPException(403, "只能撤回自己的消息")
-    if not is_admin(uid) and time.time() - int(row["ts"] or 0) > 120:
+    if not is_admin(uid) and _age_seconds(row["ts"]) > 120:
         conn.close(); raise HTTPException(400, "超过 2 分钟不能撤回")
     try:
         c = json.loads(row["content"] or "{}")
@@ -3128,7 +3171,7 @@ async def edit_message(cid: str, seq: int, request: Request, device: str = ""):
         conn.close(); raise HTTPException(404, "消息不存在")
     if int(row["sender"] or 0) != int(uid):
         conn.close(); raise HTTPException(403, "只能编辑自己的消息")
-    if time.time() - int(row["ts"] or 0) > 300:
+    if _age_seconds(row["ts"]) > 300:
         conn.close(); raise HTTPException(400, "超过 5 分钟不能编辑")
     try:
         c = json.loads(row["content"] or "{}")
@@ -3238,7 +3281,7 @@ async def ws_endpoint(ws: WebSocket):
             conv = f"u{uid}"
         ws.uid = uid
         ws.device = _dev
-        touch_device(_dev)
+        touch_device(_dev, force=True)
         clients.setdefault(conv, set()).add(ws)
         await ws.send_text(json.dumps({"t": "auth_ok", "bot": {"online": bot.online}, "conv": conv,
                                        "profile": {"uid": uid, "name": nick, "kind": prof.get("kind"),
