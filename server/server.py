@@ -3626,11 +3626,33 @@ async def thumb(fid: str, w: int = 128):
                         headers={"Cache-Control": "public, max-age=604800"})
 
 
+def _still_frame(path: pathlib.Path, fid: str) -> pathlib.Path:
+    """动图（gif/webp 多帧）取第一帧存成 jpg，作为静态背景使用。"""
+    cache = path.parent / (fid + ".still.jpg")
+    try:
+        if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
+            return cache
+        from PIL import Image
+        im = Image.open(path)
+        if getattr(im, "n_frames", 1) <= 1:
+            return path
+        im.seek(0)
+        im.convert("RGB").save(cache, "JPEG", quality=88, optimize=True)
+        return cache
+    except Exception:
+        return path
+
+
 @app.get("/media/{fid}")
-async def media(fid: str, request: Request):
+async def media(fid: str, request: Request, still: int = 0):
     row = _file_row(fid)
     if row is None:
         raise HTTPException(404, "不存在")
+    if still:
+        sp = _still_frame(pathlib.Path(row["path"]), fid)
+        if sp.suffix.lower() in (".jpg", ".jpeg"):
+            return FileResponse(sp, media_type="image/jpeg",
+                                headers={"Cache-Control": "public, max-age=604800"})
     if row["kind"] not in ("image", "video", "audio"):
         raise HTTPException(404, "该文件请用下载方式获取")
     path = pathlib.Path(row["path"])

@@ -1464,7 +1464,7 @@ function applyState(){
   r.setProperty('--bgY', Math.max(-60, Math.min(60, Number(B.y||0)))+'%');
   r.setProperty('--bgZoom', String(Math.max(1, Math.min(2.6, Number(B.zoom||1.02)*cover))));
   var bgEl = $('bg');
-  if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
+  if(B.url){ var su=bgStillUrl(B.url); bgEl.style.backgroundImage = 'url('+(_BGFREEZE[su]||su)+')'; bgEl.style.backgroundColor='transparent'; }
   else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
   else { bgEl.style.backgroundImage = 'none'; bgEl.style.backgroundColor = 'var(--bg)'; }
   var _drag = document.body.classList.contains('dragsld');
@@ -1527,6 +1527,31 @@ function applyState(){
   syncSheet();
 }
 
+var _BGFREEZE={};
+function bgStillUrl(url){
+  if(!url) return url;
+  if(/^\/media\//.test(url)) return url + (url.indexOf('?')>=0?'&':'?') + 'still=1';
+  if(!/\.(gif|webp)(\?|$)/i.test(url)) return url;
+  if(_BGFREEZE[url]) return _BGFREEZE[url];
+  if(_BGFREEZE['p:'+url]) return url;
+  _BGFREEZE['p:'+url]=1;
+  var img=new Image();
+  img.onload=function(){
+    try{
+      var c=document.createElement('canvas');
+      var w=img.naturalWidth||1, h=img.naturalHeight||1;
+      var k=Math.min(1, 1600/Math.max(w,h));
+      c.width=Math.round(w*k); c.height=Math.round(h*k);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      var d=c.toDataURL('image/jpeg',0.88);
+      _BGFREEZE[url]=d;
+      var cur=curBg();
+      if((cur.url||'')===url){ var bg=$('bg'); if(bg) bg.style.backgroundImage='url('+d+')'; }
+    }catch(e){}
+  };
+  img.src=url;
+  return url;
+}
 function applyBgOnly(){
   var B = curBg();
   var r = document.documentElement.style;
@@ -1626,8 +1651,19 @@ function renderConvs(){
   }
 }
 
+function resetViewState(){
+  document.body.classList.remove('sideopen','dragsld');
+  var m=document.getElementById('main'); if(m) m.style.filter='';
+  Array.prototype.forEach.call(document.querySelectorAll('.sheet.peek'), function(x){ x.classList.remove('peek'); });
+  var bg=document.getElementById('bg');
+  if(bg){ bg.style.transition='none';
+    ['--bgRot','--bgX','--bgY'].forEach(function(k){ document.documentElement.style.setProperty(k, k==='--bgRot'?'0deg':'0%'); });
+    setTimeout(function(){ if(bg) bg.style.transition=''; }, 60);
+  }
+}
 function switchConv(id){
   try{ var old=current; if(old) saveDraftFor(old); }catch(e){}
+  resetViewState();
   EDITSEQ=0;
   if(id===current){ $('side').classList.remove('show'); $('mask').classList.remove('show'); document.body.classList.remove('sideopen'); return; }
   current = id;
@@ -1642,6 +1678,7 @@ function switchConv(id){
   applyState();   // 顶部头像按会话类型刷新：群聊只认群图片，私聊才用 AI 头像
   loadHistory();
   $('side').classList.remove('show'); $('mask').classList.remove('show');
+  document.body.classList.remove('sideopen');
 }
 
 async function refreshNamesForGroup(cid){
@@ -2266,7 +2303,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.34', UP_URL = '';
+var APP_VER = '0.53.35', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
