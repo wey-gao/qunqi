@@ -547,9 +547,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink)}
 #sheetOnboard .obrow{align-items:flex-start}
 #sheetOnboard .obav{margin-top:2px}
-#upBar{position:fixed;left:0;right:0;top:0;height:3px;display:none;z-index:99;background:transparent}
-#upBar div{height:3px;width:0;background:var(--accent);transition:width .2s}
-#upBar span{position:absolute;right:8px;top:6px;font-size:11px;color:var(--dim);background:var(--panel);padding:2px 6px;border-radius:8px}
+
 </style>
 </head>
 <body>
@@ -904,7 +902,6 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   <div class="body"><div id="fwdList"></div></div>
 </div>
 
-<div id="upBar"><div></div><span></span></div>
 <div class="sheet" id="sheetFavs">
   <header><b>收藏</b><button class="close" data-close>×</button></header>
   <div class="body"><div id="favList"></div></div>
@@ -1958,7 +1955,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.18', UP_URL = '';
+var APP_VER = '0.53.19', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
