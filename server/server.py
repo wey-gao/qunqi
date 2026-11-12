@@ -200,7 +200,10 @@ THEMES = [
             "bubble": "round",
             "font": "sans",
             "frame": "hairline",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#0e92c4",
+            "ubb2": "#269dca"
         }
     },
     {
@@ -221,7 +224,10 @@ THEMES = [
             "bubble": "sharp",
             "font": "sans",
             "frame": "bold",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#858585",
+            "ubb2": "#919191"
         }
     },
     {
@@ -242,7 +248,10 @@ THEMES = [
             "bubble": "round",
             "font": "sans",
             "frame": "hairline",
-            "deco": "ticks"
+            "deco": "ticks",
+            "ubtext": "#ffffff",
+            "ubb": "#359b86",
+            "ubb2": "#49a592"
         }
     },
     {
@@ -263,7 +272,10 @@ THEMES = [
             "bubble": "round",
             "font": "sans",
             "frame": "neon",
-            "deco": "ticks"
+            "deco": "ticks",
+            "ubtext": "#ffffff",
+            "ubb": "#5786f5",
+            "ubb2": "#6892f6"
         }
     },
     {
@@ -284,7 +296,10 @@ THEMES = [
             "bubble": "round",
             "font": "sans",
             "frame": "neon",
-            "deco": "corners"
+            "deco": "corners",
+            "ubtext": "#ffffff",
+            "ubb": "#2f99a5",
+            "ubb2": "#44a3ae"
         }
     },
     {
@@ -305,7 +320,10 @@ THEMES = [
             "bubble": "round",
             "font": "serif",
             "frame": "hairline",
-            "deco": "ticks"
+            "deco": "ticks",
+            "ubtext": "#ffffff",
+            "ubb": "#3f9968",
+            "ubb2": "#52a377"
         }
     },
     {
@@ -326,7 +344,10 @@ THEMES = [
             "bubble": "round",
             "font": "round",
             "frame": "hairline",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#209a6e",
+            "ubb2": "#36a47c"
         }
     },
     {
@@ -347,7 +368,10 @@ THEMES = [
             "bubble": "glow",
             "font": "mono",
             "frame": "neon",
-            "deco": "hud"
+            "deco": "hud",
+            "ubtext": "#ffffff",
+            "ubb": "#2597c2",
+            "ubb2": "#3ba1c8"
         }
     },
     {
@@ -368,7 +392,10 @@ THEMES = [
             "bubble": "sharp",
             "font": "mono",
             "frame": "neon",
-            "deco": "scan"
+            "deco": "scan",
+            "ubtext": "#ffffff",
+            "ubb": "#24a30d",
+            "ubb2": "#3aac25"
         }
     },
     {
@@ -389,7 +416,10 @@ THEMES = [
             "bubble": "sharp",
             "font": "mono",
             "frame": "hairline",
-            "deco": "ticks"
+            "deco": "ticks",
+            "ubtext": "#ffffff",
+            "ubb": "#1b9f51",
+            "ubb2": "#32a962"
         }
     },
     {
@@ -410,7 +440,10 @@ THEMES = [
             "bubble": "round",
             "font": "sans",
             "frame": "glass",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#6687f5",
+            "ubb2": "#7593f6"
         }
     },
     {
@@ -431,7 +464,10 @@ THEMES = [
             "bubble": "round",
             "font": "serif",
             "frame": "stitch",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#b5763c",
+            "ubb2": "#bc8450"
         }
     },
     {
@@ -452,7 +488,10 @@ THEMES = [
             "bubble": "round",
             "font": "serif",
             "frame": "stitch",
-            "deco": "seal"
+            "deco": "seal",
+            "ubtext": "#ffffff",
+            "ubb": "#96703a",
+            "ubb2": "#a07e4e"
         }
     },
     {
@@ -473,7 +512,10 @@ THEMES = [
             "bubble": "round",
             "font": "round",
             "frame": "hairline",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#8b6fd4",
+            "ubb2": "#977dd8"
         }
     },
     {
@@ -494,7 +536,10 @@ THEMES = [
             "bubble": "round",
             "font": "round",
             "frame": "hairline",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#b7729d",
+            "ubb2": "#be80a7"
         }
     },
     {
@@ -515,7 +560,10 @@ THEMES = [
             "bubble": "round",
             "font": "round",
             "frame": "hairline",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#ce6a81",
+            "ubb2": "#d3798e"
         }
     },
     {
@@ -536,7 +584,10 @@ THEMES = [
             "bubble": "round",
             "font": "sans",
             "frame": "hairline",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#b17f39",
+            "ubb2": "#b98c4d"
         }
     },
     {
@@ -557,7 +608,10 @@ THEMES = [
             "bubble": "sharp",
             "font": "sans",
             "frame": "bold",
-            "deco": "none"
+            "deco": "none",
+            "ubtext": "#ffffff",
+            "ubb": "#5a879e",
+            "ubb2": "#6a93a8"
         }
     },
     {
@@ -578,7 +632,10 @@ THEMES = [
             "bubble": "round",
             "font": "serif",
             "frame": "stitch",
-            "deco": "seal"
+            "deco": "seal",
+            "ubtext": "#ffffff",
+            "ubb": "#b97f45",
+            "ubb2": "#c08c58"
         }
     },
     {
@@ -599,7 +656,10 @@ THEMES = [
             "bubble": "sharp",
             "font": "serif",
             "frame": "double",
-            "deco": "seal"
+            "deco": "seal",
+            "ubtext": "#ffffff",
+            "ubb": "#3b4a4a",
+            "ubb2": "#4f5c5c"
         }
     },
     {
@@ -620,7 +680,10 @@ THEMES = [
             "bubble": "glow",
             "font": "sans",
             "frame": "neon",
-            "deco": "corners"
+            "deco": "corners",
+            "ubtext": "#ffffff",
+            "ubb": "#e06b3d",
+            "ubb2": "#e37a50"
         }
     },
     {
@@ -641,7 +704,10 @@ THEMES = [
             "bubble": "glow",
             "font": "sans",
             "frame": "neon",
-            "deco": "corners"
+            "deco": "corners",
+            "ubtext": "#ffffff",
+            "ubb": "#3b9883",
+            "ubb2": "#4fa28f"
         }
     },
     {
@@ -662,7 +728,10 @@ THEMES = [
             "bubble": "sharp",
             "font": "round",
             "frame": "bold",
-            "deco": "hud"
+            "deco": "hud",
+            "ubtext": "#ffffff",
+            "ubb": "#000000",
+            "ubb2": "#1a1a1a"
         }
     }
 ]

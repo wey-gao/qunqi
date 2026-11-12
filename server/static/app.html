@@ -598,6 +598,23 @@ body.tdeco-seal .sheet::after{content:'群栖';position:absolute;right:16px;bott
 #bgDrag.on{display:block}
 #bgDrag.grabbing{cursor:grabbing}
 #bgDragHint{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:23;background:rgba(10,16,24,.72);color:#fff;font-size:12px;padding:6px 10px;border-radius:8px;display:none}
+
+/* ===== 气泡配色统一收口（按主题计算过可读性） ===== */
+.row.user .bub{background:linear-gradient(135deg,
+  color-mix(in srgb,var(--ubb2,var(--accent)) calc(var(--bubO,1)*100%),transparent),
+  color-mix(in srgb,var(--ubb,var(--accent)) calc(var(--bubO,1)*100%),transparent))!important;
+  color:var(--ubink,#fff)!important;border:0!important}
+.row.user .bub .quote{background:rgba(255,255,255,.18);border-left-color:rgba(255,255,255,.62);color:rgba(255,255,255,.92)}
+.row.user .bub .quote b{color:#fff}
+.row.user .bub .tag{color:rgba(255,255,255,.88);border-color:rgba(255,255,255,.45)}
+.row.user .bub .fops a,.row.user .bub .fops button{color:#fff;border-color:rgba(255,255,255,.45);background:rgba(255,255,255,.16)}
+/* 空消息不画框 */
+.bub:empty{display:none!important}
+/* 超长文本不撑破气泡 */
+.bub{overflow-wrap:anywhere;word-break:break-word;max-width:min(78%,560px)}
+/* 关闭状态的面板不投阴影、不模糊，避免屏幕边缘出现半透明竖带 */
+.sheet:not(.show){box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;visibility:hidden}
+.sheet.show{visibility:visible}
 </style>
 </head>
 <body>
@@ -1313,6 +1330,9 @@ function applyState(){
     r.setProperty('--bg', t.v.bg); r.setProperty('--panel', t.v.panel); r.setProperty('--panel2', t.v.panel2);
     r.setProperty('--line', t.v.line); r.setProperty('--ink', t.v.ink); r.setProperty('--dim', t.v.dim);
     r.setProperty('--accent', t.v.accent); r.setProperty('--user', t.v.user); r.setProperty('--ai', t.v.ai);
+    r.setProperty('--ubb', t.v.ubb || t.v.accent);
+    r.setProperty('--ubb2', t.v.ubb2 || t.v.accent);
+    r.setProperty('--ubink', t.v.ubtext || '#ffffff');
   }
   r.setProperty('--fs', (S.font.size||15)+'px');
   var fc = S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'') ? S.font.color : '';
@@ -2072,7 +2092,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.31', UP_URL = '';
+var APP_VER = '0.53.32', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
