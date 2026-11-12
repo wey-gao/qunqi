@@ -682,7 +682,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   <header><b>输入身份码</b><button class="close" data-close>×</button></header>
   <div class="sbody">
     <p class="sdesc">在旧手机或设置页可以看到 6 位身份码。</p>
-    <input id="codeInputOb" maxlength="6" placeholder="如 000000" autocomplete="off"
+    <input id="codeInputOb" maxlength="6" placeholder="6 位身份码" autocomplete="off"
       style="width:100%;box-sizing:border-box;padding:10px 12px;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);">
     <button class="obbtn" id="cfCodeOk" type="button">恢复并登录</button>
     <button class="obbtn ghost" id="cfCodeCancel" type="button">取消</button>
@@ -1131,13 +1131,12 @@ var SECRET = LS.getItem('gw_secret') || '';
 var DEV = (function(){
   var k='gw_device', v=LS.getItem(k);
   if(!v){
-    // APK 内置页首次启动沿用已有账号，避免出现“没有聊天记录”
-    v = FILE_MODE ? 'dev-local' : 'dev-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+    v = 'dev-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
     LS.setItem(k,v);
   }
   return v;
 })();
-var ME = {uid:1001, name:'', kind:'user', code:''}, NET = {base:(location.protocol==='file:'?'http://127.0.0.1:8099':location.origin)};
+var ME = {uid:1001, name:'', kind:'user', code:''}, NET = {base:(location.protocol==='file:'?(typeof INJECTED!=='undefined'?INJECTED:''):location.origin)};
 var SENT = {}, MRGS = {}, OPMSG = null, MULTI = false, SEL = {}, REPLY = null, NAMES = {}, VOICE = null, CALL = null, PEER = null, CALLDATA = null;
 var READ = JSON.parse(LS.getItem('gw_read')||'{}');
 var MENTION = JSON.parse(LS.getItem('gw_mention')||'{}');
@@ -1936,7 +1935,10 @@ function showUpdate(v, url, notes){
   $('upBar').onclick = function(){ if(notes) toast(notes); };
   $('upBar').style.display = 'flex';
   $('upGo').onclick = function(){
-    if(UP_URL){ location.href = UP_URL; } else { toast('服务器还没配置下载地址'); }
+    if(!UP_URL){ toast('服务器还没配置下载地址'); return; }
+    var abs = UP_URL;
+    if(abs.indexOf('http')!==0 && API_BASE) abs = API_BASE.replace(/\/+$/,'') + (abs.charAt(0)==='/' ? abs : '/'+abs);
+    location.href = abs;
   };
 }
 async function checkVersion(){
@@ -1973,7 +1975,7 @@ function connect(){
   if(location.protocol==='https:') proto='wss';
   if(FILE_MODE || SAVED_SRV){
     if(!API_BASE) return;
-    try{ var u=new URL(API_BASE); proto = u.protocol==='https:'?'wss':'ws'; host=u.host; }catch(e){ proto='ws'; host='127.0.0.1:8099'; }
+    try{ var u=new URL(API_BASE); proto = u.protocol==='https:'?'wss':'ws'; host=u.host; }catch(e){ proto='ws'; host=''; }
   }
   ws = new WebSocket(proto+'://'+host+'/ws'+(TK?'?token='+encodeURIComponent(TK):''));
   ws.onopen = function(){ ws.send(JSON.stringify({t:'auth', conv:current, device:DEV, name:ME.name, secret:SECRET})); };
@@ -2683,7 +2685,7 @@ function goServer(v){
 $('btnSrvSave').onclick=function(){ goServer($('srvInput').value); };
 $('btnSrvReset').onclick=function(){
   try{ localStorage.removeItem('gw_server'); localStorage.removeItem('gw_secret'); localStorage.removeItem('gw_token'); }catch(e){}
-  location.href = 'http://127.0.0.1:8099/';
+  location.href = (typeof INJECTED!=='undefined' && INJECTED) ? (INJECTED + '/') : location.href;
 };
 $('btnProfLogout').onclick=function(){
   if(!confirm('退出后本机需要重新进入，服务器聊天记录仍在。')) return;

@@ -492,10 +492,7 @@ public class MainActivity extends Activity {
             while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
             in.close();
             String html = bos.toString("UTF-8");
-            // 首次启动沿用已有账号，避免“没有聊天记录”
-            String seed = "<script>try{if(!localStorage.getItem('gw_device'))"
-                    + "localStorage.setItem('gw_device','dev-local');}catch(e){}</script>";
-            html = html.replace("<head>", "<head>" + seed);
+            // 不在安装包里内置任何设备身份，首次启动由页面自己生成
             if (html.length() < 1000) throw new IllegalStateException("asset empty");
             web.loadDataWithBaseURL(LOCAL_URL, html, "text/html; charset=utf-8", "utf-8", null);
         } catch (Exception e) {

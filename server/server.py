@@ -131,8 +131,7 @@ async def secret_guard(request: Request, call_next):
 from fastapi.middleware.cors import CORSMiddleware
 _orig = [x.strip() for x in os.getenv("CORS_ORIGINS", "").split(",") if x.strip()]
 if not _orig:
-    _orig = [o for o in [PUBLIC_BASE, "http://127.0.0.1:8099", "http://127.0.0.1:8099",
-                         "http://localhost:8099"] if o]
+    _orig = [o for o in [PUBLIC_BASE, "http://127.0.0.1:8099", "http://localhost:8099"] if o]
 app.add_middleware(CORSMiddleware, allow_origins=_orig,
                    allow_origin_regex=r"https://[a-z0-9-]+\.trycloudflare\.com",
                    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
