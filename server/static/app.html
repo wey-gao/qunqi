@@ -925,6 +925,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
     </div>
     <div class="qmeta" id="qMeta">输入关键词后回车</div>
     <div id="qList"></div>
+    <button class="wbtn" id="qMore" type="button" style="display:none;margin-top:8px">加载更多</button>
   </div>
 </div>
 
@@ -1840,25 +1841,34 @@ Array.prototype.forEach.call(document.querySelectorAll('#qFilters [data-qf]'), f
     if($('qInput').value.trim()) doSearch();
   };
 });
-async function doSearch(){
-  var q=$('qInput').value.trim(); if(!q && !QF.who && !QF.kind && !QF.days){ $('qMeta').textContent='输入关键词或选择筛选条件'; return; }
+var QOFF=0;
+async function doSearch(more){
+  var q=$('qInput').value.trim();
+  if(!more) QOFF=0;
+  if(!q && !QF.who && !QF.kind && !QF.days){ $('qMeta').textContent='输入关键词或选择筛选条件'; return; }
   $('qMeta').textContent='搜索中…';
   try{
     var r=await fetch('/api/search?conv='+encodeURIComponent(current)+'&q='+encodeURIComponent(q)+'&device='+encodeURIComponent(DEV)+'&limit=60'
-      +'&who='+encodeURIComponent(QF.who)+'&kind='+encodeURIComponent(QF.kind)+'&days='+encodeURIComponent(QF.days));
+      +'&offset='+QOFF+'&who='+encodeURIComponent(QF.who)+'&kind='+encodeURIComponent(QF.kind)
+      +(QF.days ? ('&days='+encodeURIComponent(QF.days)) : ''));
     if(!r.ok){ $('qMeta').textContent='没有权限或搜索失败'; return; }
     var d=await r.json();
-    $('qMeta').textContent='找到 '+d.total+' 条（服务器最近 1000 条内）';
-    $('qList').innerHTML=(d.items||[]).map(function(it){
+    var html=(d.items||[]).map(function(it){
       var t=new Date(it.ts||0);
       return '<div class="qhit" data-seq="'+it.seq+'"><b>'+esc(it.name||'')+' · '+(it.ts?fmtTime(t):'')+'</b><p>'+esc(it.text||'（无文字）')+'</p></div>';
-    }).join('') || '<div class="qmeta">没有匹配的记录</div>';
+    }).join('');
+    if(more){ $('qList').innerHTML += html; }
+    else { $('qList').innerHTML = html || '<div class="qmeta">没有匹配的记录</div>'; }
+    $('qMeta').textContent='已显示 '+(QOFF+(d.items||[]).length)+' / '+d.total+' 条（服务器最近 1000 条内）';
+    QOFF += (d.items||[]).length;
+    $('qMore').style.display = (d.total > QOFF) ? 'block' : 'none';
     Array.prototype.forEach.call($('qList').querySelectorAll('[data-seq]'), function(el){
       el.onclick=function(){ jumpToSeq(+el.dataset.seq); };
     });
   }catch(e){ $('qMeta').textContent='搜索失败'; }
 }
 $('qInput').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); doSearch(); } });
+$('qMore').onclick=function(){ doSearch(true); };
 function fmtTime(d){
   function p(n){ return ('0'+n).slice(-2); }
   return (d.getMonth()+1)+'月'+d.getDate()+'日 '+p(d.getHours())+':'+p(d.getMinutes());
@@ -1925,7 +1935,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.12', UP_URL = '';
+var APP_VER = '0.53.13', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2089,17 +2099,25 @@ function describe(acts){
 
 function outboxLoad(){ try{ return JSON.parse(LS.getItem('gw_outbox')||'[]'); }catch(e){ return []; } }
 function outboxSave(a){ try{ LS.setItem('gw_outbox', JSON.stringify(a.slice(-50))); }catch(e){} }
-function outboxPush(item){ var a=outboxLoad(); a.push(item); outboxSave(a); }
+function outboxPush(item){
+  var a=outboxLoad();
+  if(a.length>=50) toast('待发送已满 50 条，最早一条被覆盖');
+  a.push(item); outboxSave(a);
+}
 function outboxFlush(){
   if(!ws || ws.readyState!==1) return;
   var a=outboxLoad(); if(!a.length) return;
   var keep=[];
   a.forEach(function(it){
-    if(it.conv && it.conv!==current){ keep.push(it); return; }
-    try{ ws.send(JSON.stringify({t:'msg_send', type:it.type||'text', client_msg_id:it.cmid, content:it.content})); }
-    catch(e){ keep.push(it); }
+    try{
+      var frame={t:'msg_send', type:it.type||'text', client_msg_id:it.cmid, content:it.content};
+      if(it.conv) frame.conv=it.conv;   /* 允许补发别的会话，服务端会校验成员身份 */
+      ws.send(JSON.stringify(frame));
+    }catch(e){ keep.push(it); }
   });
   outboxSave(keep);
+  if(current){ try{ ws.send(JSON.stringify({t:'switch', conv:current})); }catch(e){} }
+  if(keep.length) toast('还有 '+keep.length+' 条待发送');
 }
 function saveDraftFor(cid){ try{ if(!cid) return; var v=$('input').value; if(v) LS.setItem('gw_draft_'+cid, v); else LS.removeItem('gw_draft_'+cid); }catch(e){} }
 function saveDraft(){
@@ -2219,15 +2237,29 @@ async function uploadChunked(file, name, mime){
   }
   var total = Math.ceil(file.size / CH);
   while(st.idx < total){
-    var part = file.slice(st.idx*CH, Math.min(file.size, (st.idx+1)*CH));
     var ok=false, n=0, last=null;
-    while(!ok && n<4){
+    while(!ok && n<6){
+      var part = file.slice(st.idx*CH, Math.min(file.size, (st.idx+1)*CH));
       try{
         var rr = await fetch('/api/files/chunk/'+encodeURIComponent(st.id)+'/'+st.idx, {method:'PUT', body:part});
+        if(rr.status===404){
+          /* 服务器清理或重启导致任务失效：重新申请，从第 0 片开始 */
+          st.id=null; st.idx=0; LS.setItem(key, JSON.stringify(st));
+          throw new Error('chunk lost');
+        }
         if(!rr.ok) throw new Error('chunk '+rr.status);
         last = await rr.json();
         if(last.retry) st.idx = last.received; else { st.idx = last.received; ok = true; }
-      }catch(e){ n++; await new Promise(function(r){ setTimeout(r, 700*n); }); }
+      }catch(e){
+        if(e && e.message==='chunk lost'){
+          n++;
+          if(n>=6) break;
+          var again = await fetch('/api/files/chunk/init', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name:name, mime:(mime||'application/octet-stream'), size:file.size})});
+          if(again.ok){ st.id=(await again.json()).upload_id; st.idx=0; LS.setItem(key, JSON.stringify(st)); }
+          else { await new Promise(function(r){ setTimeout(r, 700*n); }); }
+        } else { n++; await new Promise(function(r){ setTimeout(r, 700*n); }); }
+      }
     }
     LS.setItem(key, JSON.stringify(st));
     if(!ok){ upProgress(null); throw new Error('网络不稳，进度已保存，重新发送同一文件可续传'); }
@@ -3570,11 +3602,17 @@ $('chkDnd').onchange=function(){
   try{ if(window.NativePush && NativePush.setDnd) NativePush.setDnd(on); }catch(e){}
   toast(on?'已开启免打扰':'已关闭免打扰');
 };
-$('btnExportConv').onclick=function(){
+$('btnExportConv').onclick=async function(){
   if(!current){ toast('先打开一个会话'); return; }
-  var u = (API_BASE||location.origin)+'/api/export?conv='+encodeURIComponent(current)
-        +'&device='+encodeURIComponent(DEV)+'&secret='+encodeURIComponent(SECRET);
-  try{ if(window.NativeOpen) NativeOpen.open(u); else location.href=u; }catch(e){ location.href=u; }
+  try{
+    var r=await fetch('/api/export/token',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({conv:current, device:DEV})});
+    if(!r.ok){ toast('导出失败'); return; }
+    var d=await r.json();
+    var base=(API_BASE||location.origin).replace(/\/+$/,'');
+    var u=base+'/export/'+encodeURIComponent(d.token);
+    try{ if(window.NativeOpen) NativeOpen.open(u); else location.href=u; }catch(e){ location.href=u; }
+  }catch(e){ toast('导出失败'); }
 };
 $('btnFavs').onclick=function(){ renderFavs(); openSheet('sheetFavs'); };
 function renderFavs(){

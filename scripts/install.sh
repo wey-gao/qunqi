@@ -25,8 +25,8 @@ fi
 BOT_NAME="${BOT_NAME:-$(ask 'AI 名称' 'AI 助手')}"
 BOT_ID="${BOT_ID:-$(ask 'AI 数字 uid' 2001)}"
 ADMIN_CODES="${ADMIN_CODES:-$(ask '管理员身份码（留空自动生成）' '')}"
-[ -z "$ADMIN_CODES" ] && ADMIN_CODES=$(head -c 8 /dev/urandom | tr -dc 'A-Z0-9')
-BOT_TOKEN="${BOT_TOKEN:-$(head -c 40 /dev/urandom | tr -dc 'A-Za-z0-9')}"
+[ -z "$ADMIN_CODES" ] && ADMIN_CODES=$(python3 -c "import secrets,string;print(''.join(secrets.choice(string.ascii_uppercase+string.digits) for _ in range(8)))")
+BOT_TOKEN="${BOT_TOKEN:-$(python3 -c "import secrets;print(secrets.token_urlsafe(32))")}"
 ASTRBOT_WS="${ASTRBOT_WS:-$(ask 'AstrBot WS 地址（留空=纯本地网关）' '')}"
 APK_URL="${APK_URL:-$(ask 'APK 直链（可留空）' '')}"
 REPO_SLUG="${REPO_SLUG:-$(ask 'GitHub 仓库 slug（可留空）' '')}"

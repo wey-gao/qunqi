@@ -97,6 +97,23 @@ async def diag_log(request: Request, call_next):
 
 
 @app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    try:
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        ctype = resp.headers.get("content-type", "")
+        if ctype.startswith("text/html"):
+            resp.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self' data: blob:; img-src * data: blob:; media-src * data: blob:; "
+                "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src *")
+    except Exception:
+        pass
+    return resp
+
+
+@app.middleware("http")
 async def secret_guard(request: Request, call_next):
     """知道 device id 不够，还得有设备密钥；AI 的 device=bot 额外要 BOT_TOKEN。"""
     path = request.url.path
@@ -125,7 +142,9 @@ async def secret_guard(request: Request, call_next):
                 return JSONResponse({"detail": "AI 口令不正确"}, status_code=403)
         else:
             stored = secret_of(device)
-            if stored and secret != stored:
+            if not stored:
+                return JSONResponse({"detail": "设备未注册，请先调用 /api/device"}, status_code=403)
+            if secret != stored:
                 return JSONResponse({"detail": "设备密钥不正确"}, status_code=403)
     return await call_next(request)
 
@@ -432,10 +451,15 @@ def device_profile(device_id: str, name: str = "", kind: str = "user", with_secr
                 "admin": True, "secret": BOT_TOKEN}
     if not device_id:
         device_id = "anon-" + secrets.token_hex(8)
-    h = hashlib.sha1(device_id.encode()).hexdigest()
-    uid = 100000 + int(h[:7], 16) % 800000
     conn = db()
+    def _new_uid():
+        while True:
+            cand = secrets.randbelow(800000) + 100000
+            if conn.execute("SELECT 1 FROM device WHERE uid=?", (cand,)).fetchone() is None:
+                return cand
+    uid = _new_uid()
     row = conn.execute("SELECT * FROM device WHERE device_id=?", (device_id,)).fetchone()
+    existed = row is not None
     if row:
         if name and name != row["name"]:
             conn.execute("UPDATE device SET name=? WHERE device_id=?", (name[:16], device_id))
@@ -460,7 +484,7 @@ def device_profile(device_id: str, name: str = "", kind: str = "user", with_secr
     code, kind2 = ident_of(device_id, kind)
     out = {"device_id": device_id, "uid": uid, "name": nick, "code": code, "kind": kind2,
            "admin": is_admin(uid), "avatar": av}
-    if with_secret:
+    if with_secret and not existed:
         out["secret"] = ensure_secret(device_id)
     return out
 
@@ -589,8 +613,19 @@ def ensure_access(cid: str, uid: int) -> bool:
     row = conv_row(cid)
     if row is not None and (row["deleted_at"] or 0):
         return False
+    if cid.startswith("u"):
+        try:
+            return int(cid[1:]) in (uid, BOT_ID)
+        except Exception:
+            return False
+    if cid.startswith("d"):
+        try:
+            a, b = cid[1:].split("-")
+            return uid in {int(a), int(b)}
+        except Exception:
+            return False
     if not cid.startswith("g"):
-        return True
+        return False
     if uid in members_of(cid):
         return True
     if cid == "g1001":
@@ -2480,9 +2515,19 @@ def require_member(conv: str, device: str):
         try:
             other = int(conv[1:])
         except Exception:
-            return
-        if uid not in (other, BOT_ID) and other != BOT_ID:
+            raise HTTPException(403, "会话标识不正确")
+        if uid != other and other != BOT_ID:
             raise HTTPException(403, "无权访问该会话")
+    elif conv.startswith("d"):
+        try:
+            a, b = conv[1:].split("-")
+            pair = {int(a), int(b)}
+        except Exception:
+            raise HTTPException(403, "会话标识不正确")
+        if uid not in pair:
+            raise HTTPException(403, "无权访问该会话")
+    else:
+        raise HTTPException(403, "会话标识不正确")
 
 
 @app.get("/api/messages")
@@ -2535,7 +2580,7 @@ async def api_agent_send(request: Request):
 
 @app.get("/api/search")
 async def api_search(conv: str = "u1001", q: str = "", device: str = "", limit: int = 60,
-                     who: str = "", kind: str = "", days: int = 0):
+                     who: str = "", kind: str = "", days: str = "", offset: int = 0):
     require_member(conv, device)
     uid = uid_by_device(device) or 0
     q = (q or "").strip()
@@ -2550,7 +2595,11 @@ async def api_search(conv: str = "u1001", q: str = "", device: str = "", limit: 
         rows = conn.execute("SELECT * FROM message WHERE conv=? ORDER BY seq DESC LIMIT 1000",
                             (conv,)).fetchall()
     conn.close()
-    since = int(time.time()) - days * 86400 if days else 0
+    try:
+        days_n = int(str(days or "0").strip() or 0)
+    except Exception:
+        days_n = 0
+    since = int(time.time()) - days_n * 86400 if days_n else 0
     items = []
     me = int(uid)
     def _snum(x):
@@ -2578,10 +2627,10 @@ async def api_search(conv: str = "u1001", q: str = "", device: str = "", limit: 
         if kind == "text" and not (c.get("text") or "").strip():
             continue
         items.append(r)
-        if len(items) >= min(limit, 100):
+        if len(items) >= 1000:
             break
-    rows = items
-    total = len(rows)
+    total = len(items)
+    rows = items[offset:offset + min(limit, 100)]
     items = []
     for r in rows:
         try:
@@ -2943,7 +2992,9 @@ async def thumb(fid: str, w: int = 128):
     if row is None:
         raise HTTPException(404, "不存在")
     if not str(row["mime"]).startswith("image/"):
-        return FileResponse(row["path"])
+        return FileResponse(row["path"], media_type="application/octet-stream",
+                            filename=row["name"] or fid, content_disposition_type="attachment",
+                            headers={"X-Content-Type-Options": "nosniff"})
     w = max(32, min(int(w), 512))
     src = pathlib.Path(row["path"])
     THUMBS.mkdir(parents=True, exist_ok=True)
@@ -3075,13 +3126,16 @@ async def kick_device(dev: str, request: Request, device: str = ""):
     conn.execute("UPDATE device SET secret=? WHERE device_id=?", (sec, dev))
     conn.commit(); conn.close()
     # 密钥已轮换，同时断开该设备已建立的连接，否则下线要等它自己重连才生效
-    for socks in list(clients.values()):
+    for key, socks in list(clients.items()):
         for sock in list(socks):
             if getattr(sock, "device", "") == dev:
+                socks.discard(sock)
                 try:
                     asyncio.create_task(sock.close(code=4403))
                 except Exception:
                     pass
+        if not socks:
+            clients.pop(key, None)
     return {"ok": True}
 
 
@@ -3099,6 +3153,48 @@ async def storage_info(device: str = ""):
     conn.close()
     return {"uploads_bytes": used, "thumbs_bytes": thumbs, "files": files, "messages": msgs,
             "quota_bytes": MAX_TOTAL}
+
+
+_EXPORT_TOKENS = {}
+
+
+@app.post("/api/export/token")
+async def export_token(request: Request):
+    body = await request.json()
+    conv = str(body.get("conv") or "")
+    device = str(body.get("device") or request.query_params.get("device", ""))
+    require_member(conv, device)
+    tok = secrets.token_urlsafe(18)
+    _EXPORT_TOKENS[tok] = (conv, int(time.time()) + 300)
+    if len(_EXPORT_TOKENS) > 500:
+        for k, v in list(_EXPORT_TOKENS.items()):
+            if v[1] < time.time():
+                _EXPORT_TOKENS.pop(k, None)
+    return {"token": tok, "expires_in": 300}
+
+
+@app.get("/export/{token}")
+async def export_by_token(token: str):
+    item = _EXPORT_TOKENS.get(token)
+    if not item or item[1] < time.time():
+        raise HTTPException(404, "导出链接已过期")
+    conv, _ = item
+    conn = db()
+    rows = conn.execute("SELECT * FROM message WHERE conv=? ORDER BY seq LIMIT 20000", (conv,)).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        try:
+            c = json.loads(r["content"] or "{}")
+        except Exception:
+            c = {}
+        items.append({"seq": r["seq"], "ts": r["ts"], "sender": r["sender"],
+                      "role": r["role"], "content": c})
+    body = json.dumps({"conv": conv, "exported_at": int(time.time()), "count": len(items),
+                       "items": items}, ensure_ascii=False, indent=1)
+    from fastapi.responses import Response
+    return Response(content=body.encode("utf-8"), media_type="application/json",
+                    headers={"Content-Disposition": "attachment; filename=qunqi-%s.json" % conv})
 
 
 @app.get("/api/export")

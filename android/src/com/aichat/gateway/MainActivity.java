@@ -170,6 +170,7 @@ public class MainActivity extends Activity {
     class PermBridge {
         @JavascriptInterface
         public String status() {
+            if (!bridgeAllowed()) return "{}";
             try {
                 boolean n = Build.VERSION.SDK_INT < 33 || checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED;
                 android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
@@ -180,6 +181,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void request() {
+            if (!bridgeAllowed()) return;
             runOnUiThread(() -> {
                 try {
                     if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
@@ -228,9 +230,25 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 只有内置本地页面或注入的服务器页面能用原生桥，防止用户手填的任意站点调用录音/轮询 */
+    private boolean bridgeAllowed() {
+        try {
+            String u = web == null ? null : web.getUrl();
+            if (u == null) return false;
+            if (u.startsWith("file:")) return true;
+            String host = android.net.Uri.parse(u).getHost();
+            if (host == null || DEFAULT_URL.isEmpty()) return false;
+            String allow = android.net.Uri.parse(DEFAULT_URL).getHost();
+            return allow != null && host.equalsIgnoreCase(allow);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     class PushBridge {
         @JavascriptInterface
         public void start(String device, String secret, String base) {
+            if (!bridgeAllowed()) return;
             try {
                 SharedPreferences p = PushService.prefs(MainActivity.this);
                 p.edit().putString("device", device == null ? "" : device)
@@ -245,6 +263,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void setDnd(boolean on) {
+            if (!bridgeAllowed()) return;
             try {
                 PushService.prefs(MainActivity.this).edit().putBoolean("dnd", on).apply();
             } catch (Throwable ignored) {}
@@ -254,6 +273,7 @@ public class MainActivity extends Activity {
     class RecBridge {
         @JavascriptInterface
         public boolean startRec() {
+            if (!bridgeAllowed()) return false;
             try {
                 if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 1003);
@@ -283,6 +303,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String stopRec() {
+            if (!bridgeAllowed()) return "";
             if (rec == null) return lastB64;
             int dur = (int) ((System.currentTimeMillis() - recStart) / 1000);
             try { rec.stop(); } catch (Throwable ignored) {}
