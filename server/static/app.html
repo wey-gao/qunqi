@@ -669,7 +669,7 @@ body.tstyle-outline .conv.active{border:1px solid color-mix(in srgb,var(--accent
 .day{margin:14px 0 16px}
 
 /* ===== 交互性能：拖动阶段关闭重效果，只保留位移/亮度 ===== */
-#bg{will-change:auto;contain:paint;z-index:0}
+#bg{will-change:auto;z-index:0}
 body.dragsld #bg{transition:none!important}
 body.dragsld .sheet,body.dragsld #side,body.dragsld .emoji{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important}
 body.dragsld *{transition:none!important;animation:none!important}
@@ -1414,7 +1414,12 @@ function lockBgHeight(){
   var el = $('bg'); if(!el) return;
   if(window.innerHeight > BG_MAXH) BG_MAXH = window.innerHeight;
   if(BG_MAXH < 480) BG_MAXH = 480;
-  el.style.height = BG_MAXH + 'px';
+  // 多留 34% 余量：背景旋转/缩放时四边不会露出底色块
+  el.style.height = Math.round(Math.max(BG_MAXH, window.innerHeight) * 1.34) + 'px';
+  el.style.width = '134%';
+  el.style.left = '-17%';
+  el.style.top = '-17%';
+  el.style.right = 'auto';
   el.style.bottom = 'auto';
 }
 window.addEventListener('resize', function(){
@@ -1454,7 +1459,8 @@ function applyState(){
 
   var B = curBg();
   applyAvatarVars();
-  var rot = Math.max(0, Math.min(180, Number(B.rotate||0)));
+  var hasPic = !!(B.url || B.gradient);
+  var rot = hasPic ? Math.max(0, Math.min(180, Number(B.rotate||0))) : 0;
   var _vW = window.innerWidth||430, _vH = window.innerHeight||930;
   var _rad = rot*Math.PI/180, _c = Math.abs(Math.cos(_rad)), _sn = Math.abs(Math.sin(_rad));
   var cover = Math.max((_vW*_c + _vH*_sn)/_vW, (_vW*_sn + _vH*_c)/_vH);
@@ -1555,7 +1561,8 @@ function bgStillUrl(url){
 function applyBgOnly(){
   var B = curBg();
   var r = document.documentElement.style;
-  var rot = Math.max(0, Math.min(180, Number(B.rotate||0)));
+  var hasPic = !!(B.url || B.gradient);
+  var rot = hasPic ? Math.max(0, Math.min(180, Number(B.rotate||0))) : 0;
   var _vW = window.innerWidth||430, _vH = window.innerHeight||930;
   var _rad = rot*Math.PI/180, _c = Math.abs(Math.cos(_rad)), _sn = Math.abs(Math.sin(_rad));
   var cover = Math.max((_vW*_c + _vH*_sn)/_vW, (_vW*_sn + _vH*_c)/_vH);
@@ -2303,7 +2310,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.35', UP_URL = '';
+var APP_VER = '0.53.36', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
