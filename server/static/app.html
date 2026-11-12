@@ -1008,6 +1008,8 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
       <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
       <button class="wbtn" id="btnPureWhite" type="button">一键纯白简约</button>
+      <div style="margin:12px 0 6px;font-size:12px;color:var(--dim)">内置动图背景 · 随包装在 App 里，秒开不走流量，只在本机生效</div>
+      <div id="builtinBgRow" style="display:flex;gap:8px"></div>
       <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
       <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>
       <div class="sld"><label>字体颜色</label><input type="color" id="fontColor" style="width:56px;height:30px;padding:0;border:none;background:none"><output id="fontColorV" style="min-width:64px">默认</output></div>
@@ -1994,7 +1996,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.28', UP_URL = '';
+var APP_VER = '0.53.29', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2785,6 +2787,24 @@ $('fontSwatch').onclick = function(e){
   saveSettings({font:{color:c}});
   toast(c ? '字体颜色已更新' : '已恢复主题默认文字色');
 };
+(function(){
+  var row=$('builtinBgRow'); if(!row) return;
+  var ORIGIN = location.origin;
+  var list=[{f:'bg1',n:'波光缓推'},{f:'bg2',n:'下潜流动'},{f:'bg3',n:'轻浮动'}];
+  row.innerHTML = list.map(function(x){
+    return '<button type="button" data-f="'+x.f+'" style="flex:1;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0b2a3a url('+ORIGIN+'/builtin/'+x.f+'-thumb.webp) center/cover;height:96px;position:relative">'+
+      '<span style="position:absolute;left:0;right:0;bottom:0;padding:4px 0;font-size:12px;color:#eaf6ff;background:rgba(8,20,28,.55)">'+x.n+'</span></button>';
+  }).join('');
+  row.onclick = function(e){
+    var b=e.target.closest?e.target.closest('button'):null; if(!b) return;
+    var f=b.getAttribute('data-f');
+    S.bg.url = ORIGIN+'/builtin/'+f+'.webp';
+    S.bg.gradient = null;
+    saveSettings({bg:{url:S.bg.url, gradient:null}});
+    applyState(); syncSheet();
+    toast('已应用内置动图背景（仅本机）');
+  };
+})();
 $('btnPureWhite').onclick = async function(){
   try{
     await saveSettings({theme:'light_clean', bg:{url:'',gradient:null,brightness:1,overlay:0,blur:0,zoom:1,x:0,y:0}, font:{color:''}, bubble:{opacity:1}});

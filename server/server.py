@@ -1816,6 +1816,18 @@ async def manifest():
     })
 
 
+@app.get("/builtin/{name}")
+async def builtin_bg(name: str):
+    """内置动图背景：APK 内自带一份，浏览器端从服务器读同名文件兜底。"""
+    if not re.match(r"^bg[0-9]{1,2}(-thumb)?\.webp$", name or ""):
+        raise HTTPException(404, "not found")
+    p = STATIC / "builtin" / name
+    if not p.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(p, media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=2592000"})
+
+
 @app.get("/sw.js")
 async def sw():
     return FileResponse(STATIC / "sw.js", media_type="application/javascript")

@@ -15,6 +15,7 @@ import android.media.MediaRecorder;
 import android.util.Base64;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceResponse;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.net.Uri;
@@ -102,6 +103,22 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, String url) { return false; }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView v, android.webkit.WebResourceRequest req) {
+                // 内置动图背景直接从 APK assets 读，秒开且不耗流量
+                try {
+                    String path = req.getUrl().getPath();
+                    if (path != null && path.startsWith("/builtin/")) {
+                        String name = path.substring("/builtin/".length());
+                        if (name.contains("..") || name.contains("/")) return null;
+                        java.io.InputStream is = getAssets().open("builtin/" + name);
+                        String mime = name.endsWith(".webp") ? "image/webp" : "application/octet-stream";
+                        return new WebResourceResponse(mime, null, is);
+                    }
+                } catch (Exception ignored) {}
+                return null;
+            }
             @Override
             public void onPageFinished(WebView v, String u) {
                 super.onPageFinished(v, u);
