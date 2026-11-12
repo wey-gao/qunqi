@@ -2058,6 +2058,13 @@ async def get_settings():
     return {"settings": public_ui(), "themes": THEMES + get_setting("custom_themes", [])}
 
 
+@app.get("/api/ui")
+async def get_ui(request: Request, device: str = ""):
+    """管理员读取服端外观，用于「恢复默认背景」把服务器默认同步回本机。"""
+    require_admin("", device)
+    return {"settings": ui_state()}
+
+
 @app.put("/api/settings")
 async def put_settings(request: Request, device: str = ""):
     body = await request.json()

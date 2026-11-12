@@ -1006,6 +1006,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
+      <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
       <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
       <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>      <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>      <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
     </div>
@@ -1981,7 +1982,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.25', UP_URL = '';
+var APP_VER = '0.53.26', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2879,6 +2880,22 @@ $('pickerBg').onchange = function(){
     applyState(); syncSheet();
     toast('背景已更新，可点预览框看效果');
   }, {aspect: ratio});
+};
+$('btnResetBg').onclick = async function(){
+  try{
+    var cur={};
+    try{ cur=JSON.parse(LS.getItem('gw_ui')||'{}'); }catch(e){}
+    delete cur.bg;
+    LS.setItem('gw_ui', JSON.stringify(cur));
+    LS.removeItem('gw_bg_seeded');
+    var r=await fetch('/api/ui?device='+encodeURIComponent(DEV),{headers:{'X-Device-Secret':SECRET}});
+    if(!r.ok) throw 0;
+    var d=await r.json();
+    seedLocalBgOnce(d.settings||{});
+    S = localUI(d.settings || S);
+    applyState();
+    toast('已恢复服务器默认背景');
+  }catch(e){ toast('恢复失败，请检查网络或权限'); }
 };
 $('btnRandomBg').onclick = async function(){
   var g = [['#1b2735','#090a0f'],['#2b1a2f','#0d0611'],['#10231f','#050c0a'],['#2a2118','#0c0906'],['#16233a','#070b14']];
