@@ -19,7 +19,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;overflow:hidden}
-#bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:translate(var(--bgX,0),var(--bgY,0)) scale(var(--bgZoom,1.02)) translateZ(0);transform-origin:center}
+#bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:translate(var(--bgX,0),var(--bgY,0)) scale(var(--bgZoom,1.02)) rotate(var(--bgRot,0deg)) translateZ(0);transform-origin:center}
 #bgOverlay{position:fixed;inset:0;z-index:-1;background:#05070a;opacity:.15;pointer-events:none}
 #app{display:flex;height:100dvh;position:relative}
 
@@ -548,10 +548,38 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 #sheetOnboard .obrow{align-items:flex-start}
 #sheetOnboard .obav{margin-top:2px}
 
+
+/* ===== 主题风格层（18+ 套主题的差异化渲染） ===== */
+#texLayer{position:fixed;inset:0;z-index:-1;pointer-events:none;background-repeat:repeat;opacity:.55;mix-blend-mode:normal}
+body.tstyle-glass #side,body.tstyle-glass .sheet{background:color-mix(in srgb,var(--panel) 76%,transparent)!important;backdrop-filter:blur(22px) saturate(1.2);-webkit-backdrop-filter:blur(22px) saturate(1.2)}
+body.tstyle-glass #composer{background:color-mix(in srgb,var(--panel) 62%,transparent)!important;backdrop-filter:blur(20px) saturate(1.2);-webkit-backdrop-filter:blur(20px) saturate(1.2)}
+body.tstyle-glass .bub{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+body.tstyle-paper #side,body.tstyle-paper .sheet{background-image:repeating-linear-gradient(0deg,rgba(90,60,20,.027) 0 1px,transparent 1px 4px),radial-gradient(circle at 22% 18%,rgba(160,120,60,.035),transparent 60%)!important;background-size:auto,220px 220px}
+body.tstyle-paper .bub{box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 2px 6px rgba(90,70,40,.10)!important;border-radius:6px!important}
+body.tstyle-neon #side{border-right:1px solid color-mix(in srgb,var(--accent) 42%,transparent);box-shadow:inset -12px 0 30px -20px color-mix(in srgb,var(--accent) 60%,transparent)}
+body.tstyle-neon .sheet{border-left:1px solid color-mix(in srgb,var(--accent) 42%,transparent);box-shadow:-18px 0 40px -22px color-mix(in srgb,var(--accent) 65%,transparent),0 -20px 60px rgba(0,0,0,.5)}
+body.tstyle-neon #composer{border-top:1px solid color-mix(in srgb,var(--accent) 34%,transparent)}
+body.tstyle-neon .bub{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 36%,transparent),0 0 16px color-mix(in srgb,var(--accent) 20%,transparent)!important}
+body.tstyle-outline #side{border-right-width:2px;border-right-color:var(--line)}
+body.tstyle-outline .sheet{border-left-width:2px;border-left-color:var(--line)}
+body.tstyle-outline .bub{border-width:1.5px!important;box-shadow:none!important}
+body.tstyle-outline .wbtn,body.tstyle-outline .mk{box-shadow:none!important}
+body.tbub-sharp .bub{border-radius:4px!important}
+body.tbub-sharp .row.bot .bub{border-bottom-left-radius:0!important}
+body.tbub-sharp .row.user .bub{border-bottom-right-radius:0!important}
+body.tbub-glow .bub{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 25%,transparent),0 6px 22px color-mix(in srgb,var(--accent) 18%,transparent)!important}
+body.tfont-serif{--tm-font:"Songti SC","Noto Serif CJK SC","Source Han Serif SC",serif}
+body.tfont-serif #msgs,body.tfont-serif .sheet,body.tfont-serif #side{font-family:var(--tm-font)}
+body.tfont-mono{--tm-font:ui-monospace,"SF Mono",Menlo,Consolas,"Noto Sans Mono CJK SC",monospace}
+body.tfont-mono #msgs,body.tfont-mono .sheet,body.tfont-mono #side{font-family:var(--tm-font);letter-spacing:.2px}
+body.tfont-round #msgs,body.tfont-round .sheet,body.tfont-round #side{font-family:"PingFang SC","HarmonyOS Sans SC","Noto Sans SC",system-ui,sans-serif;letter-spacing:.2px}
+.sheet.peek{opacity:.58;transition:opacity .18s ease}
+.tcard .tag{display:block;font-size:10px;color:var(--dim);margin-top:2px}
 </style>
 </head>
 <body>
 <div id="bg"></div><div id="bgOverlay"></div>
+<div id="texLayer"></div>
 
 <div id="app">
   <aside id="side">
@@ -1004,6 +1032,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-15" max="15" step="1"><output id="bgXV"></output></div>
       <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-15" max="15" step="1"><output id="bgYV"></output></div>
       <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
+      <div class="sld"><label>背景角度</label><input type="range" id="bgRot" min="0" max="180" step="1"><output id="bgRotV"></output></div>
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
       <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
@@ -1273,9 +1302,15 @@ function applyState(){
   var B = curBg();
   r.setProperty('--avX', Math.max(0, Math.min(100, Number(S.avatar.px==null?50:S.avatar.px)))+'%');
   r.setProperty('--avY', Math.max(0, Math.min(100, Number(S.avatar.py==null?50:S.avatar.py)))+'%');
+  var rot = Math.max(0, Math.min(180, Number(B.rotate||0)));
+  var _vW = window.innerWidth||430, _vH = window.innerHeight||930;
+  var _rad = rot*Math.PI/180, _c = Math.abs(Math.cos(_rad)), _sn = Math.abs(Math.sin(_rad));
+  var cover = Math.max((_vW*_c + _vH*_sn)/_vW, (_vW*_sn + _vH*_c)/_vH);
+  cover = Math.min(2.6, Math.max(1, cover));
+  r.setProperty('--bgRot', rot+'deg');
   r.setProperty('--bgX', Math.max(-30, Math.min(30, Number(B.x||0)))+'%');
   r.setProperty('--bgY', Math.max(-30, Math.min(30, Number(B.y||0)))+'%');
-  r.setProperty('--bgZoom', String(Math.max(1, Math.min(2, Number(B.zoom||1.02)))));
+  r.setProperty('--bgZoom', String(Math.max(1, Math.min(2.6, Number(B.zoom||1.02)*cover))));
   var bgEl = $('bg');
   if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
   else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
@@ -1286,6 +1321,24 @@ function applyState(){
     pv.style.backgroundImage = S.bg.url ? 'url('+S.bg.url+')' : (S.bg.gradient ? 'linear-gradient(160deg,'+S.bg.gradient[0]+','+S.bg.gradient[1]+')' : 'none');
     pv.style.backgroundColor = (S.bg.url||S.bg.gradient) ? 'transparent' : 'var(--panel2)';
   }
+  var vv = (t && t.v) || {};
+  var cls = document.body.className.split(' ').filter(function(x){ return x && x.indexOf('tstyle-')!==0 && x.indexOf('ttex-')!==0 && x.indexOf('tbub-')!==0 && x.indexOf('tfont-')!==0; }).join(' ');
+  cls += ' tstyle-'+(vv.style||'solid')+' tbub-'+(vv.bubble||'round')+' tfont-'+(vv.font||'sans');
+  document.body.className = cls.trim();
+  var tex = vv.tex||'none';
+  var tl = $('texLayer');
+  var acc = vv.accent || '#3fb8a0';
+  var texMap = {
+    none: '',
+    grain: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,.05) 1px, transparent 0)',
+    dots: 'radial-gradient(circle at 1px 1px, color-mix(in srgb,'+acc+' 26%,transparent) 1.2px, transparent 0)',
+    grid: 'linear-gradient(color-mix(in srgb,'+acc+' 14%,transparent) 1px, transparent 1px),linear-gradient(90deg,color-mix(in srgb,'+acc+' 14%,transparent) 1px,transparent 1px)',
+    paper: 'repeating-linear-gradient(0deg, rgba(90,70,40,.05) 0 1px, transparent 1px 4px)',
+    scan: 'repeating-linear-gradient(0deg, rgba(255,255,255,.055) 0 1px, transparent 1px 3px)',
+    aurora: 'radial-gradient(60% 40% at 18% 12%, color-mix(in srgb,'+acc+' 22%,transparent), transparent 70%),radial-gradient(50% 38% at 82% 78%, color-mix(in srgb,'+acc+' 18%,transparent), transparent 70%)'
+  };
+  var szMap = {grain:'3px 3px', dots:'16px 16px', grid:'26px 26px', paper:'auto', scan:'auto', aurora:'100% 100%'};
+  if(tl){ tl.style.backgroundImage = texMap[tex] || 'none'; tl.style.backgroundSize = szMap[tex] || 'auto'; tl.style.opacity = (tex==='none'?0:0.55); tl.style.display = 'block'; }
   var lightTheme = !!(t && t.v && /^#(f|e|d|c)/i.test(t.v.bg||''));
   document.body.classList.toggle('dark', !lightTheme);
   $('bgOverlay').style.opacity = (lightTheme ? 0 : (B.overlay||0));
@@ -1996,7 +2049,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.29', UP_URL = '';
+var APP_VER = '0.53.14', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2600,6 +2653,8 @@ $('picker').onchange = function(){
   $('picker').value='';
 };
 
+var THEME_STYLE_LABEL={solid:'纯色',glass:'玻璃',paper:'纸感',neon:'霓虹',outline:'描边'};
+var THEME_TEX_LABEL={grain:'颗粒',dots:'圆点',grid:'网格',paper:'纸纹',scan:'扫描线',aurora:'光晕'};
 function renderThemes(){
   var builtin = THEMES.filter(function(t){ return String(t.id).indexOf('custom_')!==0; });
   var customs = localThemes();
@@ -2607,7 +2662,7 @@ function renderThemes(){
     var v = t.v||{};
     return '<div class="tcard'+(t.id===S.theme?' act':'')+'" data-theme="'+esc(t.id)+'">'+
       '<div class="sw"><i style="background:'+(v.bg||'#111')+'"></i><i style="background:'+(v.accent||'#3fb8a0')+'"></i><i style="background:'+(v.panel||'#222')+'"></i></div>'+
-      '<span>'+esc(t.name||t.id)+'</span></div>';
+      '<span>'+esc(t.name||t.id)+'</span><em class="tag">'+esc(THEME_STYLE_LABEL[v.style||'solid']||'')+(v.tex&&v.tex!=='none'?(' · '+esc(THEME_TEX_LABEL[v.tex]||'')):'')+'</em></div>';
   }).join('');
   var cl=$('customThemeList');
   if(cl){
@@ -2738,6 +2793,7 @@ function syncSheet(){
   $('bgX').value = S.bg.x||0; $('bgXV').textContent = $('bgX').value;
   $('bgY').value = S.bg.y||0; $('bgYV').textContent = $('bgY').value;
   $('bgZoom').value = S.bg.zoom||1.02; $('bgZoomV').textContent = Number($('bgZoom').value).toFixed(2);
+  if($('bgRot')){ $('bgRot').value = S.bg.rotate||0; $('bgRotV').textContent = ($('bgRot').value)+'°'; }
   $('fontSize').value = S.font.size; $('fontSizeV').textContent = S.font.size;
   var fcv = (S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'')) ? S.font.color : '';
   if($('fontColor')){ $('fontColor').value = fcv || '#111318'; }
@@ -2775,6 +2831,21 @@ $('bgY').oninput = function(e){ S.bg.y=+e.target.value; $('bgYV').textContent=e.
 $('bgY').onchange = function(){ saveSettings({bg:{y:S.bg.y}}); };
 $('bgZoom').oninput = function(e){ S.bg.zoom=+e.target.value; $('bgZoomV').textContent=(+e.target.value).toFixed(2); applyState(); };
 $('bgZoom').onchange = function(){ saveSettings({bg:{zoom:S.bg.zoom}}); };
+if($('bgRot')){
+  $('bgRot').oninput = function(e){ S.bg.rotate=+e.target.value; $('bgRotV').textContent=e.target.value+'°'; applyState(); };
+  $('bgRot').onchange = function(){ saveSettings({bg:{rotate:S.bg.rotate}}); };
+}
+// 拖动外观滑块时面板暂时半透明，能直接看到背景改动
+(function(){
+  var sh=$('sheetTheme'); if(!sh) return; var tmr=0;
+  sh.addEventListener('input', function(e){
+    if(e.target && e.target.type==='range'){ clearTimeout(tmr); sh.classList.add('peek'); }
+  });
+  function off(){ tmr=setTimeout(function(){ sh.classList.remove('peek'); }, 500); }
+  sh.addEventListener('change', off);
+  sh.addEventListener('pointerup', off);
+  sh.addEventListener('touchend', off);
+})();
 $('fontColor').onchange = function(e){
   S.font.color = e.target.value; syncSheet(); applyState();
   saveSettings({font:{color:e.target.value}});
