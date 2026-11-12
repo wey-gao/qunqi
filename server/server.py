@@ -1831,10 +1831,30 @@ async def icon512():
     return FileResponse(STATIC / "icon-512.png", media_type="image/png")
 
 
+def public_ui() -> dict:
+    """匿名可见的外观：保留主题/尺寸等参数，去掉头像与背景的图片地址。"""
+    st = json.loads(json.dumps(ui_state()))
+    try:
+        if isinstance(st.get("avatar"), dict):
+            st["avatar"]["url"] = ""
+            st["avatar"]["me"] = ""
+        if isinstance(st.get("bg"), dict):
+            st["bg"]["url"] = ""
+            st["bg"]["gradient"] = ["", ""] if st["bg"].get("gradient") else st["bg"].get("gradient")
+    except Exception:
+        pass
+    return st
+
+
 @app.get("/api/net")
 async def api_net(request: Request):
     remember_host(request)
     info = net_info()
+    # 未带有效密钥时不下发内网地址，避免匿名探到服务器拓扑
+    sec = request.headers.get("x-device-secret") or request.query_params.get("secret", "")
+    if not sec:
+        info.pop("lan_ip", None)
+        info.pop("base", None)
     return info
 
 
@@ -2011,8 +2031,10 @@ async def health():
 
 @app.get("/api/status")
 async def status():
-    return {"agent": bot.online, "mode": AGENT_MODE, "settings": ui_state(),
-            "themes": THEMES + get_setting("custom_themes", []), "net": net_info()}
+    net = net_info()
+    net.pop("lan_ip", None)
+    return {"agent": bot.online, "mode": AGENT_MODE, "settings": public_ui(),
+            "themes": THEMES + get_setting("custom_themes", []), "net": net}
 
 
 @app.post("/api/device")
@@ -2033,7 +2055,7 @@ async def api_device(request: Request):
 
 @app.get("/api/settings")
 async def get_settings():
-    return {"settings": ui_state(), "themes": THEMES + get_setting("custom_themes", [])}
+    return {"settings": public_ui(), "themes": THEMES + get_setting("custom_themes", [])}
 
 
 @app.put("/api/settings")
