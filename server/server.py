@@ -78,6 +78,21 @@ SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api
 
 
 @app.middleware("http")
+async def diag_log(request: Request, call_next):
+    resp = await call_next(request)
+    try:
+        if os.getenv("DIAG_LOG", "1") == "1" and request.url.path in ("/api/me", "/api/restore", "/api/convs", "/api/messages"):
+            dev = request.query_params.get("device", "")
+            line = "%d %s dev=%s sec=%s -> %d\n" % (int(time.time()), request.url.path, dev,
+                                                     "1" if request.headers.get("x-device-secret") else "0", resp.status_code)
+            with open(DATA / "diag.log", "a") as f:
+                f.write(line)
+    except Exception:
+        pass
+    return resp
+
+
+@app.middleware("http")
 async def secret_guard(request: Request, call_next):
     """知道 device id 不够，还得有设备密钥；AI 的 device=bot 额外要 BOT_TOKEN。"""
     path = request.url.path

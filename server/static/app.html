@@ -679,7 +679,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   <header><b>输入身份码</b><button class="close" data-close>×</button></header>
   <div class="sbody">
     <p class="sdesc">在旧手机或设置页可以看到 6 位身份码。</p>
-    <input id="codeInput" maxlength="6" placeholder="如 000000" autocomplete="off"
+    <input id="codeInputOb" maxlength="6" placeholder="如 000000" autocomplete="off"
       style="width:100%;box-sizing:border-box;padding:10px 12px;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);">
     <button class="obbtn" id="cfCodeOk" type="button">恢复并登录</button>
     <button class="obbtn ghost" id="cfCodeCancel" type="button">取消</button>
@@ -1815,7 +1815,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.5', UP_URL = '';
+var APP_VER = '0.53.6', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -3280,10 +3280,14 @@ $('btnRestoreCode').onclick=async function(){
   var code=($('codeInput').value||'').trim().toUpperCase();
   if(!code){ toast('请输入身份码'); return; }
   try{
-    var r=await fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
+    var r=await fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({code:code, device_id:DEV})});
     if(!r.ok){ toast('身份码无效'); return; }
     var d=await r.json();
     LS.setItem('gw_device', d.device_id);
+    if(d.secret) LS.setItem('gw_secret', d.secret);
+    LS.setItem('gw_onboarded','1');
+    closeSheets();
     toast('已恢复，正在重载…');
     setTimeout(function(){ location.reload(); }, 700);
   }catch(e){ toast('恢复失败'); }
@@ -3322,12 +3326,12 @@ $('obDone').onclick=async function(){
 $('obRestore').onclick=function(){
   closeSheets();
   openSheet('sheetCode');
-  setTimeout(function(){ $('codeInput').focus(); },100);
+  setTimeout(function(){ $('codeInputOb').focus(); },100);
 };
 $('cfCodeCancel').onclick=function(){ closeSheets(); };
 $('sheetCode .close').onclick=function(){ closeSheets(); };
 $('cfCodeOk').onclick=async function(){
-  var code=($('codeInput').value||'').trim().toUpperCase();
+  var code=($('codeInputOb').value||'').trim().toUpperCase();
   if(!code){ toast('请输入身份码'); return; }
   try{
     var r=await fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},
