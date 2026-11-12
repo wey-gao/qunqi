@@ -528,7 +528,7 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 .ctrow .del{width:26px;height:26px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--dim);font-size:14px;line-height:1;padding:0;flex:none}
 
 /* ===== v0.51 首启弹层重设计 ===== */
-#sheetOnboard,#sheetServer{
+#sheetOnboard,#sheetServer,#sheetConfirm{
   top:50%;right:auto;bottom:auto;left:50%;
   width:min(380px,92vw);height:auto;max-height:86vh;
   border:1px solid var(--line);border-left:1px solid var(--line);border-radius:18px;
@@ -537,9 +537,9 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   transition:transform .2s cubic-bezier(.2,.8,.2,1),opacity .16s;
   overflow:hidden;
 }
-#sheetOnboard.show,#sheetServer.show{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
-#sheetOnboard header,#sheetServer header{padding:15px 18px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
-#sheetOnboard .sbody,#sheetServer .body{padding:16px 18px calc(16px + env(safe-area-inset-bottom));max-height:calc(86vh - 58px);overflow-y:auto}
+#sheetOnboard.show,#sheetServer.show,#sheetConfirm.show{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
+#sheetOnboard header,#sheetServer header,#sheetConfirm header{padding:15px 18px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+#sheetOnboard .sbody,#sheetServer .body,#sheetConfirm .sbody{padding:16px 18px calc(16px + env(safe-area-inset-bottom));max-height:calc(86vh - 58px);overflow-y:auto}
 .oblab{display:block;font-size:11.5px;color:var(--dim);margin:0 0 6px;font-weight:500}
 .obinput{width:100%;height:42px;border-radius:11px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-size:14px;outline:none}
 .obinput:focus{border-color:var(--accent)}
@@ -673,6 +673,14 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
     <button class="obbtn" id="obDone" type="button">进入聊天</button>
     <button class="obbtn ghost" id="obRestore" type="button">我有身份码，恢复旧数据</button>
     <button class="obbtn ghost" id="obSkip" type="button">先跳过</button>
+  </div>
+</div>
+<div class="sheet" id="sheetConfirm">
+  <header><b>需要确认</b></header>
+  <div class="sbody">
+    <p class="sdesc" id="cfText">—</p>
+    <button class="obbtn" id="cfOk" type="button">继续</button>
+    <button class="obbtn ghost" id="cfCancel" type="button">取消</button>
   </div>
 </div>
 <input type="file" id="pickerAvatar" accept="image/*" hidden>
@@ -1045,7 +1053,10 @@ var SECRET = LS.getItem('gw_secret') || '';
   var _f = window.fetch;
   window.fetch = function(u, o){
     o = o || {};
-    if(SECRET){ o.headers = Object.assign({}, o.headers || {}, {'X-Device-Secret': SECRET}); }
+    var _h = {};
+    if(SECRET){ _h['X-Device-Secret'] = SECRET; }
+    try{ if(typeof DEV === 'string' && DEV){ _h['X-Device'] = DEV; } }catch(e){}
+    o.headers = Object.assign({}, o.headers || {}, _h);
     return _f(u, o);
   };
 })();
@@ -1788,7 +1799,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.1', UP_URL = '';
+var APP_VER = '0.53.2', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -1981,11 +1992,19 @@ function renderChips(){
 }
 
 async function upload(blobOrFile, name, mime){
-  var res = await fetch('/api/files', {method:'POST',
-    headers:{'X-Filename': encodeURIComponent(name), 'X-Mime': mime||'application/octet-stream'},
-    body: blobOrFile});
+  var h = {'X-Filename': encodeURIComponent(name), 'X-Mime': mime||'application/octet-stream'};
+  var res = await fetch('/api/files', {method:'POST', headers:h, body: blobOrFile});
+  if(res.status===409){
+    var e = await res.json().catch(function(){ return {}; });
+    var ok = await askConfirm(e.detail || '超出普通限制，管理员可继续，是否继续上传？');
+    if(!ok) throw new Error('已取消上传');
+    h['X-Admin-Confirm'] = '1';
+    res = await fetch('/api/files', {method:'POST', headers:h, body: blobOrFile});
+  }
   if(!res.ok) throw new Error('上传失败 '+res.status);
-  return await res.json();
+  var meta = await res.json();
+  if(meta.warn) toast(meta.warn);
+  return meta;
 }
 
 function openViewer(kind, src, title, dl){
@@ -2508,7 +2527,24 @@ function closeSheets(fromPop){
   sheetUI(null); sheetOpen = false;
   if(!fromPop && history.state && history.state.sheet){ history.back(); }
 }
-$('mask').onclick = function(){ if(sheetOpen) closeSheets(); else closeSheets(true); };
+var _cfCb = null;
+function askConfirm(msg){
+  return new Promise(function(res){
+    $('cfText').textContent = msg || '确认继续？';
+    _cfCb = res;
+    openSheet('sheetConfirm');
+  });
+}
+function _cfDone(v){
+  var cb = _cfCb; _cfCb = null;
+  if(cb) cb(v);
+}
+$('cfOk').onclick = function(){ _cfDone(true); closeSheets(); };
+$('cfCancel').onclick = function(){ _cfDone(false); closeSheets(); };
+$('mask').onclick = function(){
+  if(_cfCb) _cfDone(false);
+  if(sheetOpen) closeSheets(); else closeSheets(true);
+};
 Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function(b){ b.onclick = function(){ closeSheets(); }; });
 window.addEventListener('popstate', function(){ if(sheetOpen){ sheetOpen=false; sheetUI(null); } });
 window.addEventListener('keydown', function(e){ if(e.key==='Escape'){ closeSheets(); } });
@@ -3158,9 +3194,19 @@ $('btnVoice').addEventListener('pointercancel', function(){ stopRec(); });
 $('btnVoice').addEventListener('pointerleave', function(){ if(recording) stopRec(); });
 
 async function uploadBlob(blob, name, mime){
-  var r = await fetch('/api/files', {method:'POST', headers:{'x-filename':encodeURIComponent(name), 'x-mime':mime||blob.type||'application/octet-stream'}, body:blob});
+  var h = {'x-filename':encodeURIComponent(name), 'x-mime':mime||blob.type||'application/octet-stream'};
+  var r = await fetch('/api/files', {method:'POST', headers:h, body:blob});
+  if(r.status===409){
+    var e = await r.json().catch(function(){ return {}; });
+    var ok = await askConfirm(e.detail || '超出普通限制，管理员可继续，是否继续上传？');
+    if(!ok) throw new Error('cancel');
+    h['x-admin-confirm'] = '1';
+    r = await fetch('/api/files', {method:'POST', headers:h, body:blob});
+  }
   if(!r.ok) throw new Error('upload');
-  return await r.json();
+  var meta = await r.json();
+  if(meta.warn) toast(meta.warn);
+  return meta;
 }
 
 /* ============ 引用发送后清空 & 输入中 ============ */

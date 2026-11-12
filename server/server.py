@@ -855,7 +855,12 @@ def extract_text(path: pathlib.Path) -> str:
                 if buf:
                     parts.append(f"[第{i}页]\n" + "\n".join(buf))
             return "\n".join(parts)
-        return path.read_bytes().decode("utf-8", errors="replace")
+        with open(path, "rb") as f:
+            head = f.read(2 * 1024 * 1024)
+        body = head.decode("utf-8", errors="replace")
+        if path.stat().st_size > len(head):
+            body += "\n…（文件较大，仅解析前 2MB）"
+        return body
     except Exception as exc:
         return f"[解析失败：{type(exc).__name__}]"
 
@@ -1674,7 +1679,8 @@ async def api_version():
             "app_version": get_setting("app_version", APP_VERSION),
             "apk_url": get_setting("apk_url", ""),
             "notes": get_setting("apk_notes", ""),
-            "pushed_at": get_setting("apk_pushed_at", 0)}
+            "pushed_at": get_setting("apk_pushed_at", 0),
+            **_apk_sha()}
 
 
 
@@ -2382,29 +2388,83 @@ async def get_history(conv: str = "u1001", limit: int = 60, device: str = ""):
     return {"items": history(conv, min(limit, 200))}
 
 
+_TEXT_CACHE: dict = {}
+
+
+def _apk_sha() -> dict:
+    """返回安装包哈希与大小，按 mtime 缓存，避免每次请求都算一遍。"""
+    p = STATIC / "AI-Chat.apk"
+    try:
+        mtime = p.stat().st_mtime
+    except Exception:
+        return {"apk_sha256": "", "apk_size": 0}
+    cache = _TEXT_CACHE.get("__apk__")
+    if cache and cache[0] == mtime:
+        return cache[1]
+    try:
+        import hashlib
+        h = hashlib.sha256(p.read_bytes()).hexdigest()
+        info = {"apk_sha256": h, "apk_size": p.stat().st_size}
+    except Exception:
+        info = {"apk_sha256": "", "apk_size": 0}
+    _TEXT_CACHE["__apk__"] = (mtime, info)
+    return info
+
+
 @app.post("/api/files")
 async def upload(request: Request):
+    device = request.headers.get("x-device") or request.query_params.get("device", "")
+    secret = request.headers.get("x-device-secret") or request.query_params.get("secret", "")
+    if not device and secret:
+        # 兼容旧客户端：只带密钥不带设备号时，按密钥反查设备
+        conn0 = db()
+        r0 = conn0.execute("SELECT device_id FROM device WHERE secret=?", (secret,)).fetchone()
+        conn0.close()
+        if r0:
+            device = r0["device_id"]
+    uid = require_device(device)
+    stored = secret_of(device) or ""
+    if not secret or not stored or not secrets.compare_digest(secret, stored):
+        raise HTTPException(403, "设备密钥不正确")
+    is_admin_user = is_admin(uid)
     ip = request.client.host if request.client else "?"
     now = int(time.time())
-    win = _up_rl.get(ip) or (0, 0)
-    if now - win[0] >= 60:
-        win = (now, 0)
-    if win[1] >= UPLOAD_PER_MIN:
-        raise HTTPException(429, "上传太频繁，稍后再试")
-    _up_rl[ip] = (win[0], win[1] + 1)
+    # 定期清理过期的限流记录，避免字典只增不减
+    if len(_up_rl) > 500:
+        for k, v in list(_up_rl.items()):
+            if now - v[0] > 120:
+                _up_rl.pop(k, None)
+    if not is_admin_user:
+        win = _up_rl.get(ip) or (0, 0)
+        if now - win[0] >= 60:
+            win = (now, 0)
+        if win[1] >= UPLOAD_PER_MIN:
+            raise HTTPException(429, "上传太频繁，稍后再试")
+        _up_rl[ip] = (win[0], win[1] + 1)
     try:
         used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
     except Exception:
         used = 0
-    if used > MAX_TOTAL:
-        raise HTTPException(507, "服务器存储已满")
     name = unquote(request.headers.get("x-filename", "file.bin"))
     mime = request.headers.get("x-mime", "application/octet-stream")
     raw = await request.body()
     if not raw:
         raise HTTPException(400, "空文件")
+    warn = ""
     if len(raw) > MAX_UPLOAD:
-        raise HTTPException(413, "超过大小上限")
+        if not is_admin_user:
+            raise HTTPException(413, "超过大小上限 %d MB" % (MAX_UPLOAD // 1024 // 1024))
+        if request.headers.get("x-admin-confirm") != "1":
+            raise HTTPException(409, "该文件 %.1f MB，超过普通上限 %d MB。管理员可继续上传，请确认后再发一次"
+                                % (len(raw) / 1024 / 1024, MAX_UPLOAD // 1024 // 1024))
+        warn = "管理员越权上传：%.1f MB 已超过普通上限 %d MB" % (len(raw) / 1024 / 1024, MAX_UPLOAD // 1024 // 1024)
+    if not is_admin_user and used + len(raw) >= MAX_TOTAL:
+        raise HTTPException(507, "服务器存储已满")
+    if is_admin_user and used + len(raw) >= MAX_TOTAL:
+        if request.headers.get("x-admin-confirm") != "1":
+            raise HTTPException(409, "存储已用 %.0f MB，本次上传会超出总配额，管理员可继续，请确认"
+                                % (used / 1024 / 1024))
+        warn = (warn + "；" if warn else "") + "管理员越权：总存储将超出 %d MB 配额" % (MAX_TOTAL // 1024 // 1024)
 
     raw_name = pathlib.Path(name).name
     ext = pathlib.Path(raw_name).suffix.lower()[:10]
@@ -2445,6 +2505,9 @@ async def upload(request: Request):
     conn.close()
     meta = file_meta(_file_row(fid))
     meta["text"] = text[:6000]
+    meta["admin"] = is_admin_user
+    if warn:
+        meta["warn"] = warn
     return meta
 
 
@@ -2468,11 +2531,22 @@ async def file_text(fid: str):
     row = _file_row(fid)
     if row is None:
         raise HTTPException(404, "不存在")
-    body = ""
-    if row["kind"] == "doc":
-        body = extract_text(pathlib.Path(row["path"]))
-    elif row["kind"] == "archive":
-        body = archive_listing(pathlib.Path(row["path"]))
+    cached = _TEXT_CACHE.get(fid)
+    try:
+        mtime = pathlib.Path(row["path"]).stat().st_mtime
+    except Exception:
+        mtime = 0
+    if cached and cached[0] == mtime:
+        body = cached[1]
+    else:
+        body = ""
+        if row["kind"] == "doc":
+            body = extract_text(pathlib.Path(row["path"]))
+        elif row["kind"] == "archive":
+            body = archive_listing(pathlib.Path(row["path"]))
+        if len(_TEXT_CACHE) > 200:
+            _TEXT_CACHE.clear()
+        _TEXT_CACHE[fid] = (mtime, body)
     return {"name": row["name"], "kind": row["kind"], "text": body[:8000],
             "truncated": len(body) > 8000}
 
