@@ -41,9 +41,10 @@ from fastapi.responses import FileResponse, JSONResponse
 BASE = pathlib.Path(__file__).resolve().parent
 DATA = BASE / "data"
 UPLOADS = DATA / "uploads"
+THUMBS = DATA / "thumbs"
 PLUGIN_PATH = BASE / "plugins"
 STATIC = BASE / "static"
-for p in (DATA, UPLOADS, PLUGIN_PATH):
+for p in (DATA, UPLOADS, THUMBS, PLUGIN_PATH):
     p.mkdir(parents=True, exist_ok=True)
 DB = DATA / "chat.db"
 
@@ -1689,6 +1690,15 @@ async def bot_watchdog():
 async def startup():
     init_db()
     try:
+        now0 = time.time()
+        for f in list(UPLOADS.glob(".thumb-*")):
+            f.unlink()
+        for f in list(THUMBS.glob("*.jpg")):
+            if now0 - f.stat().st_mtime > 30 * 86400:
+                f.unlink()
+    except Exception:
+        pass
+    try:
         logp = DATA / "diag.log"
         if logp.exists() and logp.stat().st_size > 1024 * 1024:
             logp.unlink()
@@ -1977,6 +1987,11 @@ async def get_settings():
 async def put_settings(request: Request, device: str = ""):
     body = await request.json()
     st = ui_state()
+    if PUBLIC_MODE:
+        uid0 = uid_by_device(device) if device else None
+        if not (uid0 and is_admin(int(uid0))):
+            return {"ok": True, "settings": st, "unchanged": True,
+                    "ignored": "仅管理员可修改全站外观"}
 
     def merge(dst, src):
         for k, v in src.items():
@@ -2027,6 +2042,8 @@ async def save_theme(request: Request):
     stored = secret_of(device)
     if not stored or secret != stored:
         raise HTTPException(403, "设备密钥不正确")
+    if PUBLIC_MODE:
+        require_admin("", device)
     name = (body.get("name") or "我的主题")[:20]
     themes = get_setting("custom_themes", [])
     # 同名覆盖，避免「副本」无限繁殖
@@ -2053,6 +2070,8 @@ async def del_theme(tid: str, device: str = "", request: Request = None):
     stored = secret_of(device)
     if not stored or (request is not None and request.headers.get("X-Device-Secret", "") != stored):
         raise HTTPException(403, "设备密钥不正确")
+    if PUBLIC_MODE:
+        require_admin("", device)
     themes = [x for x in get_setting("custom_themes", []) if x["id"] != tid]
     set_setting("custom_themes", themes)
     st = ui_state()
@@ -2082,6 +2101,15 @@ async def create_conv(request: Request):
 
 @app.post("/api/convs/join")
 async def join_conv(request: Request):
+    ip = request.client.host if request.client else "?"
+    key = "join:" + ip
+    now = int(time.time())
+    win = _up_rl.get(key) or (0, 0)
+    if now - win[0] >= 3600:
+        win = (now, 0)
+    if win[1] >= 30:
+        raise HTTPException(429, "加入太频繁，请稍后再试")
+    _up_rl[key] = (win[0], win[1] + 1)
     body = await request.json()
     prof = device_profile(body.get("device", ""), body.get("nick", ""))
     g = join_group(body.get("invite", ""), prof["uid"])
@@ -2787,7 +2815,8 @@ async def thumb(fid: str, w: int = 128):
         return FileResponse(row["path"])
     w = max(32, min(int(w), 512))
     src = pathlib.Path(row["path"])
-    cache = src.with_name(f".thumb-{fid}-{w}.jpg")
+    THUMBS.mkdir(parents=True, exist_ok=True)
+    cache = THUMBS / f"{fid}-{w}.jpg"
     if not cache.exists():
         try:
             from PIL import Image
