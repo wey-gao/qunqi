@@ -191,7 +191,7 @@ THEMES = [
             "panel2": "#f4f5f7",
             "line": "#e8eaed",
             "ink": "#111318",
-            "dim": "#8a919c",
+            "dim": "#828893",
             "accent": "#12b7f5",
             "user": "#e8f5ff",
             "ai": "#ffffff",

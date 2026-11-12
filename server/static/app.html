@@ -58,7 +58,7 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 #menuBtn{display:none}
 
 #list{flex:1;overflow-y:auto;padding:14px 14px 150px;min-height:0;scroll-behavior:smooth}
-.day{text-align:center;color:var(--dim);font-size:11.5px;margin:8px 0 14px;opacity:.85}
+.day{text-align:center;color:var(--dim);font-size:11.5px;margin:8px 0 14px}
 .row{display:flex;gap:8px;margin-bottom:12px;align-items:flex-end}
 .row.user{flex-direction:row-reverse}
 .av{width:28px;height:28px;flex:0 0 auto;display:grid;place-items:center;font-size:10.5px;color:var(--dim);background:var(--panel2);overflow:hidden}
@@ -615,6 +615,74 @@ body.tdeco-seal .sheet::after{content:'群栖';position:absolute;right:16px;bott
 /* 关闭状态的面板不投阴影、不模糊，避免屏幕边缘出现半透明竖带 */
 .sheet:not(.show){box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;visibility:hidden}
 .sheet.show{visibility:visible}
+
+/* ===== 主题材质统一：清掉写死的浅色，改为随主题走 ===== */
+.day{color:var(--dim)!important}
+.row .av{background:color-mix(in srgb,var(--panel2) 86%,var(--line))!important;color:var(--dim)!important}
+.row.user .av{background:color-mix(in srgb,var(--accent) 16%,var(--panel))!important;color:var(--accent)!important}
+#send{background:linear-gradient(140deg,color-mix(in srgb,var(--accent) 74%,#fff),var(--accent))!important;
+  box-shadow:0 6px 16px color-mix(in srgb,var(--accent) 26%,transparent)!important}
+#send:disabled{background:color-mix(in srgb,var(--panel2) 72%,var(--line))!important;box-shadow:none!important}
+#send:disabled svg{stroke:color-mix(in srgb,var(--dim) 70%,transparent)!important}
+.conv.active{background:color-mix(in srgb,var(--accent) 12%,var(--panel))!important}
+.srow em{color:var(--dim)!important}
+.row.failed .bub{background:color-mix(in srgb,#e5484d 12%,var(--panel))!important;
+  border-color:color-mix(in srgb,#e5484d 34%,var(--line))!important;color:color-mix(in srgb,#e5484d 66%,var(--ink))!important}
+
+/* ===== 视觉质感：按 style 给气泡一套材质，而不是所有主题一个白框 ===== */
+body.tstyle-solid .row.bot .bub{border:1px solid color-mix(in srgb,var(--line) 80%,transparent)!important;
+  background:var(--ai)!important}
+body.tstyle-glass .row.bot .bub{background:color-mix(in srgb,var(--ai) 64%,transparent)!important;
+  border:1px solid color-mix(in srgb,var(--line) 60%,transparent)!important;
+  box-shadow:0 1px 0 rgba(255,255,255,.28) inset,0 6px 18px rgba(16,24,40,.06)!important}
+body.tstyle-neon .row.bot .bub{background:color-mix(in srgb,var(--panel) 92%,transparent)!important;
+  border:1px solid color-mix(in srgb,var(--accent) 34%,transparent)!important;
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 10%,transparent),0 0 16px color-mix(in srgb,var(--accent) 10%,transparent)!important}
+body.tstyle-paper .row.bot .bub{background:
+  linear-gradient(180deg,color-mix(in srgb,#fff 4%,var(--ai)),var(--ai))!important;
+  border:1px solid color-mix(in srgb,var(--line) 92%,transparent)!important;
+  box-shadow:1px 1px 0 color-mix(in srgb,var(--line) 40%,transparent)!important}
+body.tstyle-outline .row.bot .bub{background:transparent!important;
+  border:1.5px solid color-mix(in srgb,var(--accent) 52%,var(--line))!important;box-shadow:none!important}
+/* 日期胶囊跟着材质走 */
+body.tstyle-glass .day{background:color-mix(in srgb,var(--panel) 55%,transparent);padding:3px 10px;border-radius:10px}
+body.tstyle-neon .day{color:color-mix(in srgb,var(--accent) 46%,var(--dim))!important}
+body.tstyle-outline .day{background:none}
+/* 输入区与发送键在描边/霓虹风格里补一圈轮廓，避免"浮在背景上" */
+body.tstyle-outline #composer{border:1.5px solid color-mix(in srgb,var(--accent) 40%,var(--line))!important;background:transparent!important}
+body.tstyle-neon #composer{box-shadow:-1px -1px 0 color-mix(in srgb,var(--accent) 22%,transparent),0 0 18px color-mix(in srgb,var(--accent) 8%)!important}
+
+/* ===== 第 4 轮：每套风格的"签名细节"，让主题不只是换色 ===== */
+body.tstyle-paper #list{background-image:linear-gradient(90deg,transparent 18px,
+  color-mix(in srgb,var(--accent) 14%,transparent) 18px,color-mix(in srgb,var(--accent) 14%,transparent) 19px,
+  transparent 19px);background-repeat:no-repeat;background-size:100% 100%}
+body.tstyle-paper .row.bot .bub,body.tstyle-paper .row.user .bub{border-radius:4px!important}
+body.tstyle-neon #main header{position:relative}
+body.tstyle-neon #main header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 75%,transparent),transparent);opacity:.7}
+body.tstyle-neon .conv.active{box-shadow:inset 2px 0 0 var(--accent)}
+body.tstyle-glass #list{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 7%,transparent),
+  transparent 38%)}
+body.tstyle-outline .conv.active{border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);background:transparent!important}
+/* 间距节奏：长列表更稳 */
+.row{margin-bottom:13px}
+.day{margin:14px 0 16px}
+
+/* ===== 交互性能：拖动阶段关闭重效果，只保留位移/亮度 ===== */
+#bg{will-change:auto;contain:paint}
+body.dragsld #bg{transition:none!important}
+body.dragsld .sheet,body.dragsld #side,body.dragsld .emoji{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important}
+body.dragsld *{transition:none!important;animation:none!important}
+.sheet.peek{transition:opacity .12s linear}
+.sheet.peek{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.row{contain:layout style}
+#texLayer{pointer-events:none}
+
+/* 日期分隔：细线 + 胶囊只在玻璃风格保留 */
+.day{display:flex!important;align-items:center;justify-content:center;gap:10px;background:none!important;padding:0!important;margin:14px 0 16px!important}
+.day::before,.day::after{content:"";width:24px;height:1px;background:color-mix(in srgb,var(--line) 85%,transparent);flex:0 0 auto}
+body.tstyle-glass .day{background:color-mix(in srgb,var(--panel) 60%,transparent)!important;padding:3px 10px!important;border-radius:10px;width:max-content;margin-left:auto;margin-right:auto}
+body.tstyle-glass .day::before,body.tstyle-glass .day::after{display:none}
 </style>
 </head>
 <body>
@@ -1070,7 +1138,7 @@ body.tdeco-seal .sheet::after{content:'群栖';position:absolute;right:16px;bott
       <p class="sdesc">群聊背景由群内统一设置；这里调整的背景只在私聊生效。</p>
       <div class="sld"><label>亮度</label><input type="range" id="bgBright" min="0.2" max="1.3" step="0.02"><output id="bgBrightV"></output></div>
       <div class="sld"><label>遮罩</label><input type="range" id="bgOverlayR" min="0" max="0.9" step="0.02"><output id="bgOverlayV"></output></div>
-      <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="24" step="1"><output id="bgBlurV"></output></div>
+      <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="14" step="1"><output id="bgBlurV"></output></div>
       <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-60" max="60" step="1"><output id="bgXV"></output></div>
       <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-60" max="60" step="1"><output id="bgYV"></output></div>
       <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
@@ -1358,16 +1426,23 @@ function applyState(){
   if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
   else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
   else { bgEl.style.backgroundImage = 'none'; bgEl.style.backgroundColor = 'var(--bg)'; }
-  bgEl.style.filter = 'brightness('+(B.brightness||1)+') blur('+(B.blur||0)+'px)';
+  var _drag = document.body.classList.contains('dragsld');
+  var _b = Number(B.brightness||1), _bl = _drag ? 0 : Math.min(14, Number(B.blur||0));
+  bgEl.style.filter = (_b===1 && _bl===0) ? 'none'
+    : ('brightness('+_b+')'+(_bl>0?(' blur('+_bl+'px)'):''));
   var pv=$('bgPv');
   if(pv){
     pv.style.backgroundImage = S.bg.url ? 'url('+S.bg.url+')' : (S.bg.gradient ? 'linear-gradient(160deg,'+S.bg.gradient[0]+','+S.bg.gradient[1]+')' : 'none');
     pv.style.backgroundColor = (S.bg.url||S.bg.gradient) ? 'transparent' : 'var(--panel2)';
   }
   var vv = (t && t.v) || {};
-  var cls = document.body.className.split(' ').filter(function(x){ return x && x.indexOf('tstyle-')!==0 && x.indexOf('ttex-')!==0 && x.indexOf('tbub-')!==0 && x.indexOf('tfont-')!==0 && x.indexOf('tframe-')!==0 && x.indexOf('tdeco-')!==0; }).join(' ');
-  cls += ' tstyle-'+(vv.style||'solid')+' tbub-'+(vv.bubble||'round')+' tfont-'+(vv.font||'sans')+' tframe-'+(vv.frame||'hairline')+' tdeco-'+(vv.deco||'none');
-  document.body.className = cls.trim();
+  var clsKey = (S.theme||'')+'|'+(vv.style||'')+'|'+(vv.bubble||'')+'|'+(vv.font||'')+'|'+(vv.frame||'')+'|'+(vv.deco||'');
+  if(window.__clsKey !== clsKey){
+    window.__clsKey = clsKey;
+    var cls = document.body.className.split(' ').filter(function(x){ return x && x.indexOf('tstyle-')!==0 && x.indexOf('ttex-')!==0 && x.indexOf('tbub-')!==0 && x.indexOf('tfont-')!==0 && x.indexOf('tframe-')!==0 && x.indexOf('tdeco-')!==0; }).join(' ');
+    cls += ' tstyle-'+(vv.style||'solid')+' tbub-'+(vv.bubble||'round')+' tfont-'+(vv.font||'sans')+' tframe-'+(vv.frame||'hairline')+' tdeco-'+(vv.deco||'none');
+    document.body.className = cls.trim();
+  }
   var tex = vv.tex||'none';
   var tl = $('texLayer');
   var acc = vv.accent || '#3fb8a0';
@@ -1381,7 +1456,11 @@ function applyState(){
     aurora: 'radial-gradient(60% 40% at 18% 12%, color-mix(in srgb,'+acc+' 22%,transparent), transparent 70%),radial-gradient(50% 38% at 82% 78%, color-mix(in srgb,'+acc+' 18%,transparent), transparent 70%)'
   };
   var szMap = {grain:'3px 3px', dots:'16px 16px', grid:'26px 26px', paper:'auto', scan:'auto', aurora:'100% 100%'};
-  if(tl){ tl.style.backgroundImage = texMap[tex] || 'none'; tl.style.backgroundSize = szMap[tex] || 'auto'; tl.style.opacity = (tex==='none'?0:0.55); tl.style.display = 'block'; }
+  var texKey = tex+'|'+acc;
+  if(tl && window.__texKey !== texKey){
+    window.__texKey = texKey;
+    tl.style.backgroundImage = texMap[tex] || 'none'; tl.style.backgroundSize = szMap[tex] || 'auto'; tl.style.opacity = (tex==='none'?0:0.55); tl.style.display = 'block';
+  }
   var lightTheme = !!(t && t.v && /^#(f|e|d|c)/i.test(t.v.bg||''));
   document.body.classList.toggle('dark', !lightTheme);
   $('bgOverlay').style.opacity = (lightTheme ? 0 : (B.overlay||0));
@@ -1405,6 +1484,52 @@ function applyState(){
   if($('btnUpGroupAvatar')) $('btnUpGroupAvatar').style.display = (String(current).charAt(0)==='g' && ME.admin ? '' : 'none');
   syncSheet();
 }
+
+function applyBgOnly(){
+  var B = curBg();
+  var r = document.documentElement.style;
+  var rot = Math.max(0, Math.min(180, Number(B.rotate||0)));
+  var _vW = window.innerWidth||430, _vH = window.innerHeight||930;
+  var _rad = rot*Math.PI/180, _c = Math.abs(Math.cos(_rad)), _sn = Math.abs(Math.sin(_rad));
+  var cover = Math.max((_vW*_c + _vH*_sn)/_vW, (_vW*_sn + _vH*_c)/_vH);
+  cover = Math.min(2.6, Math.max(1, cover));
+  r.setProperty('--bgRot', rot+'deg');
+  r.setProperty('--bgX', Math.max(-60, Math.min(60, Number(B.x||0)))+'%');
+  r.setProperty('--bgY', Math.max(-60, Math.min(60, Number(B.y||0)))+'%');
+  r.setProperty('--bgZoom', String(Math.max(1, Math.min(2.6, Number(B.zoom||1.02)*cover))));
+  var bgEl = $('bg');
+  if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
+  else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
+  else { bgEl.style.backgroundImage = 'none'; bgEl.style.backgroundColor = 'var(--bg)'; }
+  var _drag = document.body.classList.contains('dragsld');
+  var _b = Number(B.brightness||1), _bl = _drag ? 0 : Number(B.blur||0);
+  bgEl.style.filter = (_b===1 && _bl===0) ? 'none'
+    : ('brightness('+_b+')'+(_bl>0?(' blur('+_bl+'px)'):''));
+  var ov=$('bgOverlay');
+  if(ov){ var lt = /^#(f|e|d|c)/i.test(((THEMES.filter(function(t){return t.id===S.theme;})[0]||{}).v||{}).bg||'');
+    ov.style.opacity = (lt ? 0 : (B.overlay||0)); }
+}
+function applyLook(){
+  var r = document.documentElement.style;
+  r.setProperty('--fs', (S.font && S.font.size ? S.font.size : 15)+'px');
+  r.setProperty('--radius', (S.bubble.radius||14)+'px');
+  r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
+  var fc = S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'') ? S.font.color : '';
+  if(fc) r.setProperty('--ink', fc);
+}
+var _lookPend=false;
+function applyLookSoon(){ if(_lookPend) return; _lookPend=true; requestAnimationFrame(function(){ _lookPend=false; applyLook(); }); }
+
+var _bgPend=false;
+function applyBgSoon(){ if(_bgPend) return; _bgPend=true; requestAnimationFrame(function(){ _bgPend=false; applyBgOnly(); }); }
+function markDrag(on){
+  document.body.classList.toggle('dragsld', !!on);
+  if(!on) applyBgOnly();
+}
+document.addEventListener('pointerdown', function(e){ if(e.target && e.target.type==='range') markDrag(true); }, true);
+document.addEventListener('pointerup', function(){ if(document.body.classList.contains('dragsld')) markDrag(false); }, true);
+document.addEventListener('pointercancel', function(){ if(document.body.classList.contains('dragsld')) markDrag(false); }, true);
+document.addEventListener('touchend', function(){ if(document.body.classList.contains('dragsld')) setTimeout(function(){ markDrag(false); }, 120); }, true);
 
 function unreadOf(c){ var last=c.last_seq||0, r=READ[c.id]||0; return Math.max(0, last-r); }
 function saveRead(){ LS.setItem('gw_read', JSON.stringify(READ)); }
@@ -2092,7 +2217,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.32', UP_URL = '';
+var APP_VER = '0.53.33', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2698,6 +2823,12 @@ $('picker').onchange = function(){
 
 var THEME_STYLE_LABEL={solid:'纯色',glass:'玻璃',paper:'纸感',neon:'霓虹',outline:'描边'};
 var THEME_TEX_LABEL={grain:'颗粒',dots:'圆点',grid:'网格',paper:'纸纹',scan:'扫描线',aurora:'光晕'};
+function markThemeSel(){
+  var grid=$('themeGrid'); if(!grid) return;
+  Array.prototype.forEach.call(grid.querySelectorAll('[data-theme]'), function(el){
+    el.classList.toggle('act', el.dataset.theme===S.theme);
+  });
+}
 function renderThemes(){
   var builtin = THEMES.filter(function(t){ return String(t.id).indexOf('custom_')!==0; });
   var customs = localThemes();
@@ -2723,7 +2854,7 @@ function renderThemes(){
   Array.prototype.forEach.call($('themeGrid').querySelectorAll('[data-theme]'), function(el){
     el.onclick = function(){
       try{ localStorage.removeItem('gw_theme'); }catch(e){}
-      saveSettings({theme: el.dataset.theme}).then(function(){ renderThemes(); });
+      S.theme = el.dataset.theme; applyState(); markThemeSel(); saveSettings({theme: el.dataset.theme});
     };
   });
   Array.prototype.forEach.call($('customThemeList').querySelectorAll('.ctrow'), function(el){
@@ -2750,7 +2881,7 @@ function useLocalTheme(tid){
   var t = THEMES.filter(function(x){ return x.id===tid; })[0];
   if(!t) return;
   try{ localStorage.setItem('gw_theme', tid); }catch(e){}
-  S.theme = tid; applyState(); renderThemes(); toast('已切换主题');
+  S.theme = tid; applyState(); markThemeSel(); toast('已切换主题');
 }
 
 var _editThemeId='';
@@ -2862,20 +2993,20 @@ $('avPy').oninput = function(e){ S.avatar.py=+e.target.value; $('avPyV').textCon
 $('avPy').onchange = function(){ saveSettings({avatar:{py:S.avatar.py}}); };
 $('avBorder').oninput = function(e){ S.avatar.border=+e.target.value; $('avBorderV').textContent=e.target.value; applyState(); };
 $('avBorder').onchange = function(){ saveSettings({avatar:{border:S.avatar.border}}); };
-$('bgBright').oninput = function(e){ S.bg.brightness=+e.target.value; $('bgBrightV').textContent=(+e.target.value).toFixed(2); applyState(); };
+$('bgBright').oninput = function(e){ S.bg.brightness=+e.target.value; $('bgBrightV').textContent=(+e.target.value).toFixed(2); applyBgSoon(); };
 $('bgBright').onchange = function(){ saveSettings({bg:{brightness:S.bg.brightness}}); };
-$('bgOverlayR').oninput = function(e){ S.bg.overlay=+e.target.value; $('bgOverlayV').textContent=(+e.target.value).toFixed(2); applyState(); };
+$('bgOverlayR').oninput = function(e){ S.bg.overlay=+e.target.value; $('bgOverlayV').textContent=(+e.target.value).toFixed(2); applyBgSoon(); };
 $('bgOverlayR').onchange = function(){ saveSettings({bg:{overlay:S.bg.overlay}}); };
-$('bgBlur').oninput = function(e){ S.bg.blur=+e.target.value; $('bgBlurV').textContent=e.target.value; applyState(); };
+$('bgBlur').oninput = function(e){ S.bg.blur=+e.target.value; $('bgBlurV').textContent=e.target.value; applyBgSoon(); };
 $('bgBlur').onchange = function(){ saveSettings({bg:{blur:S.bg.blur}}); };
 $('bgX').oninput = function(e){ S.bg.x=+e.target.value; $('bgXV').textContent=e.target.value; applyState(); };
 $('bgX').onchange = function(){ saveSettings({bg:{x:S.bg.x}}); };
 $('bgY').oninput = function(e){ S.bg.y=+e.target.value; $('bgYV').textContent=e.target.value; applyState(); };
 $('bgY').onchange = function(){ saveSettings({bg:{y:S.bg.y}}); };
-$('bgZoom').oninput = function(e){ S.bg.zoom=+e.target.value; $('bgZoomV').textContent=(+e.target.value).toFixed(2); applyState(); };
+$('bgZoom').oninput = function(e){ S.bg.zoom=+e.target.value; $('bgZoomV').textContent=(+e.target.value).toFixed(2); applyBgSoon(); };
 $('bgZoom').onchange = function(){ saveSettings({bg:{zoom:S.bg.zoom}}); };
 if($('bgRot')){
-  $('bgRot').oninput = function(e){ S.bg.rotate=+e.target.value; $('bgRotV').textContent=e.target.value+'°'; applyState(); };
+  $('bgRot').oninput = function(e){ S.bg.rotate=+e.target.value; $('bgRotV').textContent=e.target.value+'°'; applyBgSoon(); };
   $('bgRot').onchange = function(){ saveSettings({bg:{rotate:S.bg.rotate}}); };
 }
 // 拖动外观滑块时面板暂时半透明，能直接看到背景改动
@@ -2937,11 +3068,11 @@ $('btnPureWhite').onclick = async function(){
     toast('已切换到纯白简约');
   }catch(e){ toast('切换失败'); }
 };
-$('fontSize').oninput = function(e){ S.font.size=+e.target.value; $('fontSizeV').textContent=e.target.value; applyState(); };
+$('fontSize').oninput = function(e){ S.font.size=+e.target.value; $('fontSizeV').textContent=e.target.value; applyLookSoon(); };
 $('fontSize').onchange = function(){ saveSettings({font:{size:S.font.size}}); };
-$('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyState(); };
+$('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyLookSoon(); };
 $('bubR').onchange = function(){ saveSettings({bubble:{radius:S.bubble.radius}}); };
-$('bubO').oninput = function(e){ S.bubble.opacity=+e.target.value; $('bubOV').textContent=Math.round(S.bubble.opacity*100)+'%'; applyState(); };
+$('bubO').oninput = function(e){ S.bubble.opacity=+e.target.value; $('bubOV').textContent=Math.round(S.bubble.opacity*100)+'%'; applyLookSoon(); };
 $('bubO').onchange = function(){ saveSettings({bubble:{opacity:S.bubble.opacity}}); };
 
 $('btnUpAvatar').onclick = function(){ $('pickerAvatar').click(); };
