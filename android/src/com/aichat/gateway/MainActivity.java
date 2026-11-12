@@ -162,8 +162,9 @@ public class MainActivity extends Activity {
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
         askPermissions();
-        String saved = sp.getString("url", "");
-        if (saved == null || saved.isEmpty()) loadLocalPage(); else web.loadUrl(saved);
+        // 始终用固定 base 加载内置页：换过服务器地址也不再改变 localStorage 归属，
+        // 否则同一台手机会被当成“新用户”，表现为关掉 App 就掉登录
+        loadLocalPage();
     }
 
     /* 原生录音：WebView 在 http 源下拿不到 getUserMedia，改由原生录 m4a 再回传 base64 */
@@ -515,7 +516,12 @@ public class MainActivity extends Activity {
             String html = bos.toString("UTF-8");
             // 不在安装包里内置任何设备身份，首次启动由页面自己生成
             if (html.length() < 1000) throw new IllegalStateException("asset empty");
-            web.loadDataWithBaseURL(LOCAL_URL, html, "text/html; charset=utf-8", "utf-8", null);
+            String base = LOCAL_URL;
+            if(base == null || base.isEmpty()){
+                String saved = sp.getString("url", "");
+                base = (saved == null || saved.isEmpty()) ? "https://qunqi.local/" : saved;
+            }
+            web.loadDataWithBaseURL(base, html, "text/html; charset=utf-8", "utf-8", null);
         } catch (Exception e) {
             web.loadUrl(LOCAL_URL);
         }

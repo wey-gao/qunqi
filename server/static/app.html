@@ -1958,7 +1958,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.17', UP_URL = '';
+var APP_VER = '0.53.18', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2003,9 +2003,21 @@ function softReload(){
 }
 
 var _reloginShown=false;
-function needRelogin(msg){
+async function tryAutoRegister(){
+  try{
+    var r=await fetch('/api/me?device='+encodeURIComponent(DEV));
+    if(!r.ok) return false;
+    var d=await r.json();
+    if(d && d.secret){ SECRET=d.secret; LS.setItem('gw_secret',SECRET); LS.setItem('gw_onboarded','1'); return true; }
+  }catch(e){}
+  return false;
+}
+async function needRelogin(msg){
   if(_reloginShown) return;
   _reloginShown=true;
+  if(!SECRET && await tryAutoRegister()){
+    _reloginShown=false; softReload(); return;
+  }
   try{ if(ws){ ws.onclose=null; ws.close(); } }catch(e){}
   setState(false,'需要重新登录');
   try{ toast(msg||'登录已失效，请重新登录'); }catch(e){}
