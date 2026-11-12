@@ -1090,7 +1090,7 @@ def set_members(cid: str, members: list) -> None:
     conn.close()
 
 
-def create_group(name: str, owner: int, members: list | None = None) -> dict:
+def create_group(name: str, owner: int, members: list | None = None, announce: bool = True) -> dict:
     cid = "g" + uuid.uuid4().hex[:8]
     invite = new_invite()
     ms = sorted(set([owner, BOT_ID] + (members or [])))
@@ -1102,8 +1102,10 @@ def create_group(name: str, owner: int, members: list | None = None) -> dict:
     conn.commit()
     conn.close()
     log(f"建群 {cid} / {name} / 邀请码 {invite}")
-    add_message(cid, "system", "sys", "sys",
-                {"text": f"群已创建，邀请码 {invite}。把邀请链接发给朋友即可加入，无需账号。"})
+    # 由 AI 发起的建群不再灌一条系统播报：群里只需要 AI 说话，避免“系统+AI”各跑一遍
+    if announce:
+        add_message(cid, "system", "sys", "sys",
+                    {"text": f"群已创建，邀请码 {invite}。把邀请链接发给朋友即可加入，无需账号。"})
     return {"id": cid, "name": name, "invite": invite, "members": ms, "owner": owner}
 
 
@@ -1811,7 +1813,7 @@ def apply_actions(actions: list, conv: str | None = None, actor: int = BOT_ID) -
             # ---- 群管理（服务端真正落库，不再只改前端）
             elif t == "chat.create":
                 # 群主固定为 AI，发起人作为成员加入；创建只能走服务端 AI 通路
-                g = create_group(p.get("name") or "AI 建的群", BOT_ID, members=[actor])
+                g = create_group(p.get("name") or "AI 建的群", BOT_ID, members=[actor], announce=False)
                 notes.append(f"已建群「{g['name']}」，邀请码 {g['invite']}，你已在群里")
             elif t == "chat.join":
                 try:
