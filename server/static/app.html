@@ -1942,7 +1942,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.14', UP_URL = '';
+var APP_VER = '0.53.15', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2435,6 +2435,8 @@ $('eDone').onclick = function(){
       var cb = editing.onDone, isAvatar = editing.opts && editing.opts.avatar;
       closeEditor(); cb(meta);
       if(!isAvatar){ toast('已加入待发送'); renderChips(); refreshSend(); }
+    }).catch(function(e){
+      toast('图片上传失败，请检查网络或登录状态');
     });
   }, 'image/jpeg', eState.quality || 0.82);
 };
@@ -3682,7 +3684,7 @@ $('obRestore').onclick=function(){
   setTimeout(function(){ $('codeInputOb').focus(); },100);
 };
 $('cfCodeCancel').onclick=function(){ closeSheets(); };
-$('sheetCode .close').onclick=function(){ closeSheets(); };
+(document.querySelector('#sheetCode .close')||{ }).onclick=function(){ closeSheets(); };
 $('cfCodeOk').onclick=async function(){
   var code=($('codeInputOb').value||'').trim().toUpperCase();
   if(!code){ toast('请输入身份码'); return; }
