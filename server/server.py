@@ -2316,10 +2316,12 @@ async def api_me(request: Request, device: str = "", kind: str = "user"):
     if secret_of(device):
         try:
             require_req_device(request, device)
+            return device_profile(device, "", kind)
         except HTTPException:
             if PUBLIC_MODE:
                 raise
-        return device_profile(device, "", kind)
+            # 自用模式：重装后本地只剩设备号，允许重新下发密钥，否则聊天记录全丢
+            return device_profile(device, "", kind, with_secret=True)
     return device_profile(device, "", kind, with_secret=True)
 
 
