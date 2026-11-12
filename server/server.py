@@ -3372,7 +3372,7 @@ async def set_notice(cid: str, request: Request, device: str = ""):
 
 
 DOCS_DIR = BASE / "docs"
-_DOC_WHITELIST = {"OPS.md", "GUIDE.md", "AGENT_API.md"}
+_DOC_WHITELIST = {"OPS.md", "GUIDE.md", "AGENT_API.md", "FILE_FORMATS.md"}
 
 
 @app.get("/api/docs/{name}")
