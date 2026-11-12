@@ -1105,6 +1105,21 @@ function deepMerge(dst, src){
   });
   return dst;
 }
+function seedLocalBgOnce(src){
+  try{
+    if(LS.getItem('gw_bg_seeded')==='1') return;
+    var sbg = src && src.bg;
+    if(!sbg || !(sbg.url || (sbg.gradient && sbg.gradient.length))) return;
+    var cur={};
+    try{ cur=JSON.parse(LS.getItem('gw_ui')||'{}'); }catch(e){}
+    if(cur.bg && (cur.bg.url || (cur.bg.gradient && cur.bg.gradient.length))){
+      LS.setItem('gw_bg_seeded','1'); return;   // 本机已有自选背景，不动
+    }
+    cur.bg = Object.assign({}, sbg);
+    LS.setItem('gw_ui', JSON.stringify(cur));
+    LS.setItem('gw_bg_seeded','1');
+  }catch(e){}
+}
 function localUI(base){
   try{
     var o=JSON.parse(LS.getItem('gw_ui')||'{}');
@@ -1966,7 +1981,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.24', UP_URL = '';
+var APP_VER = '0.53.25', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2066,6 +2081,7 @@ function connect(){
       try{ if(window.NativePush && SECRET) NativePush.start(DEV, SECRET, API_BASE || location.origin); }catch(e){}
       try{ outboxFlush(); }catch(e){}
 
+      seedLocalBgOnce(f.settings || S);
       S = localUI(f.settings || S);
       THEMES = mergeThemes(f.themes || THEMES);
       var _lt=localThemeId(); if(_lt && THEMES.filter(function(x){return x.id===_lt;})[0]) S.theme=_lt;
