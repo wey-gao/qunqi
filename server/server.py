@@ -37,7 +37,7 @@ from urllib.parse import quote, unquote
 import uvicorn
 import websockets
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 
 BASE = pathlib.Path(__file__).resolve().parent
 DATA = BASE / "data"
@@ -1227,7 +1227,7 @@ def conv_public(cid: str) -> dict | None:
     for c in conv_list(0):
         if c["id"] == cid:
             c = dict(c)
-            c["join_url"] = f"{backends['base']}/?join={c.get('invite') or ''}"
+            c["join_url"] = f"{backends['base']}/j/{c.get('invite') or ''}"
             return c
     return None
 
@@ -2316,6 +2316,53 @@ async def startup():
     info = net_info()
     log(f"网关就绪 base={info['base']} mode={info['mode']} token={info['token_required']}")
 
+
+
+LANDING_HTML = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>加入群栖</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:#0f1218;color:#e8ecf2;font:16px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:24px}
+.card{width:100%;max-width:380px;background:#161b24;border:1px solid #232a36;border-radius:18px;padding:26px 22px;text-align:center}
+.logo{width:64px;height:64px;border-radius:18px;margin:0 auto 16px;background:#1fb6a0;display:flex;align-items:center;
+justify-content:center;font-size:26px;font-weight:700;color:#fff}
+h1{font-size:19px;margin:0 0 6px;font-weight:600}p{color:#93a0b3;font-size:13px;margin:0 0 18px}
+code{display:block;background:#0f1218;border:1px solid #232a36;border-radius:10px;padding:11px;margin:0 0 18px;
+font:700 16px/1 ui-monospace,Menlo,monospace;letter-spacing:2px;color:#4fd6bd;word-break:break-all}
+a{display:block;text-decoration:none;border-radius:12px;padding:13px;font-size:15px;font-weight:600;margin-bottom:10px}
+.a1{background:#1fb6a0;color:#fff}.a2{background:#1d2430;color:#dfe6f0;border:1px solid #2c3444}
+.tip{font-size:12px;color:#6d7a8d;margin-top:8px}
+</style></head><body><div class="card">
+<div class="logo">群</div><h1>邀请你加入群聊</h1>
+<p>邀请码 <b style="color:#4fd6bd">{{CODE}}</b>　正在尝试打开「群栖」…</p>
+<code>{{CODE}}</code>
+<a class="a1" id="open" href="{{INTENT}}">在「群栖」中打开并进群</a>
+<a class="a2" href="{{APK}}">还没装？下载安装包</a>
+<div class="tip" id="tip">装好之后回到本页点上面按钮，会自动进群</div>
+</div>
+<script>
+(function(){
+  var fallback = "{{APK}}";
+  var intentUrl = "{{INTENT}}";
+  function go(){ try{ location.href = intentUrl; }catch(e){} setTimeout(function(){
+    var t=document.getElementById('tip'); if(t) t.textContent='没反应？点上面的按钮，或先下载安装包';
+  }, 1500); }
+  go();
+})();
+</script></body></html>"""
+
+
+@app.get("/j/{code}")
+async def join_landing(code: str, request: Request):
+    """邀请落地页：有 App 直接拉起并进群，没装 App 自动下载安装包。"""
+    safe = "".join(ch for ch in code if ch.isalnum() or ch in "-_")[:32]
+    apk = str(request.base_url).rstrip("/") + "/api/apk"
+    intent = ("intent://join/" + safe + "#Intent;scheme=qunqi;package=com.aichat.gateway;"
+              "S.browser_fallback_url=" + urllib.parse.quote(apk, safe="") + ";end")
+    html = (LANDING_HTML.replace("{{CODE}}", safe)
+            .replace("{{INTENT}}", intent)
+            .replace("{{APK}}", apk))
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 @app.get("/")
 async def index(join: str = ""):

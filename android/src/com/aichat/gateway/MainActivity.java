@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
     private String DEFAULT_URL = "";
     private String FALLBACK_URL = "";
     private WebView web;
+    private String pendingJoin = null;
     private SharedPreferences sp;
     private android.webkit.ValueCallback<Uri[]> fileCb;
     private MediaRecorder rec;
@@ -142,6 +143,15 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String u) {
                 super.onPageFinished(v, u);
+                if (pendingJoin != null) {
+                    final String code = pendingJoin;
+                    pendingJoin = null;
+                    // 等页面完成注册/登录（首次启动要建身份）再自动进群
+                    v.postDelayed(() -> {
+                        String js = "try{tryJoin(" + jsStr(code) + ", true);}catch(e){}";
+                        v.evaluateJavascript(js, null);
+                    }, 1800);
+                }
                 v.evaluateJavascript("(document.getElementById('hName')?1:0)", value -> {
                     if (value != null && value.contains("0")) {
                         // 本地页没渲染出来，兜底走远程，避免黑屏
@@ -199,12 +209,47 @@ public class MainActivity extends Activity {
         });
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
+        pendingJoin = joinCodeFrom(getIntent());
         askPermissions();
         // 始终用固定 base 加载内置页：换过服务器地址也不再改变 localStorage 归属，
         // 否则同一台手机会被当成“新用户”，表现为关掉 App 就掉登录
         loadLocalPage();
     }
 
+
+    /** 从 qunqi://join/<code> 里取邀请码 */
+    private String joinCodeFrom(Intent it) {
+        try {
+            if (it == null || it.getData() == null) return null;
+            Uri d = it.getData();
+            if (!"qunqi".equals(d.getScheme())) return null;
+            String code = d.getLastPathSegment();
+            if (code == null || code.isEmpty()) code = d.getQueryParameter("code");
+            if (code == null) return null;
+            code = code.replaceAll("[^A-Za-z0-9_-]", "");
+            return code.isEmpty() ? null : code;
+        } catch (Exception e) { return null; }
+    }
+
+    private static String jsStr(String s) {
+        return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'";
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String code = joinCodeFrom(intent);
+        if (code != null) {
+            pendingJoin = code;
+            if (web != null && web.getUrl() != null) {
+                web.postDelayed(() -> {
+                    String js = "try{tryJoin(" + jsStr(code) + ", true);}catch(e){}";
+                    web.evaluateJavascript(js, null);
+                }, 600);
+                pendingJoin = null;
+            }
+        }
+    }
 
     /* 省电白名单跳转：部分 ROM 屏蔽 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS，
        逐级退到“省电策略列表页”再到“应用详情”，保证点了一定有反应 */

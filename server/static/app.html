@@ -2298,7 +2298,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.40', UP_URL = '';
+var APP_VER = '0.53.41', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -3576,7 +3576,7 @@ $('btnSwitchServer').onclick = function(){
   if($('srvInput')){ $('srvInput').value = NET.base || location.origin; openSheet('sheetServer'); }
 };
 
-async function tryJoin(code){
+async function tryJoin(code, auto){
   code = (code||'').trim();
   // 完整邀请链接：可能指向别的服务器
   if(/^https?:\/\//.test(code) || code.indexOf('join=')>=0){
@@ -3594,8 +3594,10 @@ async function tryJoin(code){
   }
   JOIN_CODE = '';
   if(!code) return;
-  var ok = confirm('加入群聊「'+code+'」？');
-  if(!ok) return;
+  if(!auto){
+    var ok = confirm('加入群聊「'+code+'」？');
+    if(!ok) return;
+  }
   var r = await fetch('/api/convs/join', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({invite:code, device:DEV, nick:ME.name})});
   if(!r.ok){ toast('邀请码无效'); return; }
@@ -3741,7 +3743,7 @@ $('btnDissolve').onclick = function(){
     };
   });
   $('btnCopyInvite').onclick = function(){
-    var link = (NET.base||location.origin)+'/?join='+(d.invite||'');
+    var link = (NET.base||location.origin)+'/j/'+(d.invite||'');
     copyText(link).then(function(ok){ toast(ok?'邀请链接已复制：'+link:'复制失败，请手动记下 '+link); });
   };
   openSheet('sheetGroup');
