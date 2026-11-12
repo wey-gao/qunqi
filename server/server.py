@@ -103,7 +103,7 @@ async def secret_guard(request: Request, call_next):
         # 自用模式：缺密钥也能读资料，但接口不返回 secret
         return await call_next(request)
     device = request.query_params.get("device") or ""
-    secret = request.headers.get("x-device-secret") or ""
+    secret = request.headers.get("x-device-secret") or request.query_params.get("secret", "")
     raw = None
     if not device and request.method in ("POST", "PATCH", "DELETE"):
         raw = await request.body()
@@ -2885,6 +2885,100 @@ async def do_removebg(fid: str, request: Request):
     conn.commit()
     conn.close()
     return file_meta(_file_row(new_id))
+
+
+@app.get("/api/devices")
+async def my_devices(device: str = ""):
+    uid = require_device(device)
+    conn = db()
+    rows = conn.execute("SELECT device_id,name,created_at FROM device WHERE uid=? ORDER BY created_at", (uid,)).fetchall()
+    conn.close()
+    return {"items": [{"device_id": r["device_id"], "name": r["name"],
+                       "created_at": r["created_at"], "current": r["device_id"] == device} for r in rows]}
+
+
+@app.post("/api/devices/{dev}/kick")
+async def kick_device(dev: str, request: Request, device: str = ""):
+    uid, _ = require_req_device(request, device)
+    conn = db()
+    row = conn.execute("SELECT uid FROM device WHERE device_id=?", (dev,)).fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "设备不存在")
+    if int(row["uid"]) != int(uid):
+        conn.close()
+        raise HTTPException(403, "只能下线自己的设备")
+    if dev == device:
+        conn.close()
+        raise HTTPException(400, "不能下线当前设备")
+    sec = "sk_" + secrets.token_urlsafe(24)
+    conn.execute("UPDATE device SET secret=? WHERE device_id=?", (sec, dev))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/storage")
+async def storage_info(device: str = ""):
+    require_device(device)
+    try:
+        used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
+        thumbs = sum(f.stat().st_size for f in THUMBS.glob("*") if f.is_file())
+    except Exception:
+        used = thumbs = 0
+    conn = db()
+    files = conn.execute("SELECT COUNT(*) c FROM file").fetchone()["c"]
+    msgs = conn.execute("SELECT COUNT(*) c FROM message").fetchone()["c"]
+    conn.close()
+    return {"uploads_bytes": used, "thumbs_bytes": thumbs, "files": files, "messages": msgs,
+            "quota_bytes": MAX_TOTAL}
+
+
+@app.get("/api/export")
+async def export_conv(conv: str = "", device: str = "", limit: int = 5000):
+    require_member(conv, device)
+    conn = db()
+    rows = conn.execute("SELECT * FROM message WHERE conv=? ORDER BY seq LIMIT ?",
+                        (conv, max(1, min(limit, 20000)))).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        try:
+            c = json.loads(r["content"] or "{}")
+        except Exception:
+            c = {}
+        items.append({"seq": r["seq"], "ts": r["ts"], "sender": r["sender"],
+                      "role": r["role"], "content": c})
+    body = json.dumps({"conv": conv, "exported_at": int(time.time()), "count": len(items),
+                       "items": items}, ensure_ascii=False, indent=1)
+    from fastapi.responses import Response
+    return Response(content=body.encode("utf-8"), media_type="application/json",
+                    headers={"Content-Disposition": "attachment; filename=qunqi-%s.json" % conv})
+
+
+@app.get("/api/convs/{cid}/notice")
+async def get_notice(cid: str, device: str = ""):
+    try:
+        require_member(cid, device)
+    except HTTPException:
+        if not is_admin(uid_by_device(device) or 0):
+            raise
+    notes = get_setting("conv_notice", {}) or {}
+    return {"notice": notes.get(cid, "")}
+
+
+@app.post("/api/convs/{cid}/notice")
+async def set_notice(cid: str, request: Request, device: str = ""):
+    require_admin(cid, device)
+    body = await request.json()
+    text = str(body.get("notice") or "").strip()[:200]
+    notes = get_setting("conv_notice", {}) or {}
+    if text:
+        notes[cid] = text
+    else:
+        notes.pop(cid, None)
+    set_setting("conv_notice", notes)
+    await broadcast_all({"t": "notice", "conv": cid, "notice": text})
+    return {"ok": True, "notice": text}
 
 
 @app.get("/api/plugins")

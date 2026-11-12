@@ -806,7 +806,11 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <button class="wbtn" id="btnRestoreCode" type="button">用这个身份码恢复</button>
       <div style="font-size:11.5px;color:var(--dim);line-height:1.7;margin-top:8px">恢复后本地会重新同步聊天记录。更换手机、清除数据、换浏览器时都能接回原来的账号。</div>
     </div>
-    <div class="sec"><h4>设备</h4><div class="me"><span class="mi">ID</span><span class="mn" id="myDevice">—</span></div></div>
+    <div class="sec"><h4>设备</h4><div class="me"><span class="mi">ID</span><span class="mn" id="myDevice">—</span></div>
+      <div id="devList" style="margin-top:6px"></div></div>
+    <div class="sec"><h4>存储</h4><div class="qmeta" id="stgInfo">读取中…</div>
+      <button class="wbtn" id="btnExportConv" type="button">导出当前会话记录</button>
+      <button class="wbtn" id="btnClearLocal" type="button">清理本机缓存</button></div>
   </div>
 </div>
 
@@ -1046,6 +1050,33 @@ if(SAVED_SRV){ try{ document.querySelector('meta[name=theme-color]')||0; }catch(
 if(FILE_MODE){
   var _b = document.createElement('base'); _b.href = API_BASE + '/'; document.head.appendChild(_b);
 }
+function deepMerge(dst, src){
+  if(!dst || typeof dst!=='object') return src;
+  Object.keys(src||{}).forEach(function(k){
+    var v=src[k];
+    if(v && typeof v==='object' && !Array.isArray(v)) dst[k]=deepMerge(dst[k]||{}, v);
+    else dst[k]=v;
+  });
+  return dst;
+}
+function localUI(base){
+  try{
+    var o=JSON.parse(LS.getItem('gw_ui')||'{}');
+    base=deepMerge(base||{}, o);
+  }catch(e){}
+  return base;
+}
+function saveLocalUI(patch){
+  try{
+    var cur={};
+    try{ cur=JSON.parse(LS.getItem('gw_ui')||'{}'); }catch(e){}
+    deepMerge(cur, patch);
+    LS.setItem('gw_ui', JSON.stringify(cur));
+    deepMerge(S, patch);
+    applyState();
+  }catch(e){}
+}
+
 var S = {theme:'light_clean', bg:{url:'',brightness:1,overlay:.15,blur:0}, avatar:{url:'',shape:'circle',size:44,removeBg:false,border:2,borderColor:'#3fb8a0'}, bubble:{radius:14, opacity:1}, font:{size:15}};
 var SYS = null;
 var THEMES = [], CONVS = [], current = '', ws = null, retry = 0;
@@ -1238,8 +1269,10 @@ function renderConvs(){
 }
 
 function switchConv(id){
+  try{ var old=current; if(old) saveDraftFor(old); }catch(e){}
   if(id===current){ $('side').classList.remove('show'); $('mask').classList.remove('show'); return; }
   current = id;
+  try{ loadDraft(); }catch(e){}
   if(String(id).charAt(0)==='g'){ refreshNamesForGroup(id); }
   if(ws) ws.send(JSON.stringify({t:'switch', conv:id}));
   var cur0=null; CONVS.forEach(function(c){ if(c.id===id) cur0=c; });
@@ -1815,7 +1848,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.7', UP_URL = '';
+var APP_VER = '0.53.8', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -1871,8 +1904,9 @@ function connect(){
     if(f.t==='auth_ok'){
       retry=0; setState(true,'在线');
       try{ if(window.NativePush && SECRET) NativePush.start(DEV, SECRET, API_BASE || location.origin); }catch(e){}
+      try{ outboxFlush(); }catch(e){}
 
-      S = f.settings || S;
+      S = localUI(f.settings || S);
       THEMES = mergeThemes(f.themes || THEMES);
       var _lt=localThemeId(); if(_lt && THEMES.filter(function(x){return x.id===_lt;})[0]) S.theme=_lt;
       if(f.profile){ ME = f.profile; syncMyAvatar();
@@ -1960,11 +1994,47 @@ function describe(acts){
   return '已为你'+kinds.join('、');
 }
 
+function outboxLoad(){ try{ return JSON.parse(LS.getItem('gw_outbox')||'[]'); }catch(e){ return []; } }
+function outboxSave(a){ try{ LS.setItem('gw_outbox', JSON.stringify(a.slice(-50))); }catch(e){} }
+function outboxPush(item){ var a=outboxLoad(); a.push(item); outboxSave(a); }
+function outboxFlush(){
+  if(!ws || ws.readyState!==1) return;
+  var a=outboxLoad(); if(!a.length) return;
+  var keep=[];
+  a.forEach(function(it){
+    if(it.conv && it.conv!==current){ keep.push(it); return; }
+    try{ ws.send(JSON.stringify({t:'msg_send', type:it.type||'text', client_msg_id:it.cmid, content:it.content})); }
+    catch(e){ keep.push(it); }
+  });
+  outboxSave(keep);
+}
+function saveDraftFor(cid){ try{ if(!cid) return; var v=$('input').value; if(v) LS.setItem('gw_draft_'+cid, v); else LS.removeItem('gw_draft_'+cid); }catch(e){} }
+function saveDraft(){
+  try{
+    if(!current) return;
+    var v=$('input').value;
+    if(v) LS.setItem('gw_draft_'+current, v); else LS.removeItem('gw_draft_'+current);
+  }catch(e){}
+}
+function loadDraft(){
+  try{ $('input').value=LS.getItem('gw_draft_'+current)||''; refreshSend(); }catch(e){}
+}
+
 function send(opts){
   opts = opts || {};
-  if(!ws || ws.readyState!==1){ toast('正在连接，稍等一下'); return; }
   var text = $('input').value.trim();
   if(!text && !pending.length) return;
+  if(!ws || ws.readyState!==1){
+    var qmid='c-'+Math.random().toString(16).slice(2,8);
+    var qcontent={text:text, file_ids:pending.map(function(p){return p.file_id;})};
+    outboxPush({cmid:qmid, conv:current, type:'text', content:qcontent});
+    var qph=renderMsg({role:'user', sender:ME.uid, client_msg_id:qmid, content:{text:text, attachments:pending.slice()}});
+    if(qph){ qph.classList.add('sending'); }
+    LS.removeItem('gw_draft_'+current);
+    $('input').value=''; clearPending(); clearReply(); refreshSend();
+    toast('网络未就绪，已存入待发送队列');
+    return;
+  }
   var ids = pending.map(function(p){ return p.file_id; });
   var mentions = AT_UID.slice();
   if(REPLY) mentions.push(REPLY.seq && 0);
@@ -1997,7 +2067,9 @@ function send(opts){
     SENT[cmid]=ph;
   }
   clearPending(); clearReply();
-  $('input').value=''; $('input').style.height='auto'; refreshSend();
+  $('input').value=''; $('input').style.height='auto';
+  try{ LS.removeItem('gw_draft_'+current); }catch(e){}
+  refreshSend();
 }
 
 function clearPending(){ pending=[]; renderChips(); refreshSend(); }
@@ -2327,16 +2399,12 @@ function saveSettings(patch){
   _spTimer=setTimeout(flushSettings, 350);
 }
 async function flushSettings(){
+  /* 外观只留在本机：不写服务器，避免多设备互相覆盖，也少一份云端存储 */
   if(_spBusy){ _spAgain=true; return; }
   var body=_spPatch; _spPatch={};
   if(!Object.keys(body).length) return;
   _spBusy=true;
-  try{
-    var r=await fetch('/api/settings?device='+encodeURIComponent(DEV),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var d=await r.json();
-    if(d.settings){ S=d.settings; applyState(); }
-    if(d.avatar_ignored) toast('AI 头像只有管理员能改，已保留原样');
-  }catch(e){}
+  saveLocalUI(body);
   _spBusy=false;
   if(_spAgain){ _spAgain=false; flushSettings(); }
 }
@@ -2946,6 +3014,7 @@ if(window.visualViewport){
   };
   vv.addEventListener('resize', fixKb); vv.addEventListener('scroll', fixKb);
 }
+$('input').addEventListener('input', function(){ try{ saveDraft(); }catch(e){} });
 $('input').addEventListener('input', function(){
   var i=$('input'); i.style.height='auto'; i.style.height=Math.min(i.scrollHeight,120)+'px'; refreshSend();
   var cp = i.selectionStart;
@@ -3252,6 +3321,25 @@ $('input').addEventListener('input', function(){
 async function loadIdentity(){
   refreshServerLabel();
   try{
+    var dl = await (await fetch('/api/devices?device='+encodeURIComponent(DEV))).json();
+    $('devList').innerHTML = (dl.items||[]).map(function(x){
+      var tag = x.current ? '<span class="badge bot">当前</span>' : '<button class="mk" data-kick="'+esc(x.device_id)+'">下线</button>';
+      return '<div class="me" style="margin-top:4px"><span class="mn">'+esc(x.name||x.device_id)+'</span>'+tag+'</div>';
+    }).join('');
+    Array.prototype.forEach.call($('devList').querySelectorAll('[data-kick]'), function(b){
+      b.onclick = async function(){
+        if(!await askConfirm('下线后该设备需要身份码重新恢复，确定？')) return;
+        var r = await fetch('/api/devices/'+encodeURIComponent(b.dataset.kick)+'/kick?device='+encodeURIComponent(DEV), {method:'POST'});
+        toast(r.ok ? '已下线' : '下线失败');
+        loadIdentity();
+      };
+    });
+  }catch(e){}
+  try{
+    var st = await (await fetch('/api/storage?device='+encodeURIComponent(DEV))).json();
+    $('stgInfo').textContent = '文件 '+st.files+' 个 · '+Math.round(st.uploads_bytes/1048576)+' MB / '+Math.round(st.quota_bytes/1048576)+' MB；消息 '+st.messages+' 条；缩略图 '+Math.round(st.thumbs_bytes/1024)+' KB';
+  }catch(e){ $('stgInfo').textContent='读取失败'; }
+  try{
     var d = await (await fetch('/api/me?device='+encodeURIComponent(DEV))).json();
     if(d && d.secret){ SECRET = d.secret; LS.setItem('gw_secret', SECRET); }
     $('myCode').textContent = d.code || '—';
@@ -3308,6 +3396,19 @@ $('btnRestoreCode').onclick=async function(){
   }catch(e){ toast('恢复失败'); }
 };
 $('btnIdentity').onclick=function(){ openSheet('sheetIdentity'); loadIdentity(); };
+$('btnExportConv').onclick=function(){
+  if(!current){ toast('先打开一个会话'); return; }
+  var u = (API_BASE||location.origin)+'/api/export?conv='+encodeURIComponent(current)
+        +'&device='+encodeURIComponent(DEV)+'&secret='+encodeURIComponent(SECRET);
+  try{ if(window.NativeOpen) NativeOpen.open(u); else location.href=u; }catch(e){ location.href=u; }
+};
+$('btnClearLocal').onclick=function(){
+  try{
+    Object.keys(LS._k||{}).forEach(function(k){ if(k.indexOf('gw_draft_')===0) LS.removeItem(k); });
+    LS.removeItem('gw_outbox');
+    toast('已清理草稿与待发送队列');
+  }catch(e){ toast('清理失败'); }
+};
 
 /* ============ 首次设置昵称 / 头像，跨设备继承 ============ */
 var OB_AVATAR = '';
