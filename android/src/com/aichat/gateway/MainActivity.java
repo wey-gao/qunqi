@@ -98,11 +98,31 @@ public class MainActivity extends Activity {
         s.setAllowUniversalAccessFromFileURLs(true);
         web.setBackgroundColor(Color.WHITE);
         web.setDownloadListener((url, ua, cd, mime, len) -> {
-            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception ignored) {}
+            try {
+                // APK 交给系统下载器/浏览器，WebView 自己不处理二进制
+                if (url != null && url.contains("/api/apk")) {
+                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } else {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                }
+            } catch (Exception ignored) {}
         });
         web.setWebViewClient(new WebViewClient() {
             @Override
-            public boolean shouldOverrideUrlLoading(WebView v, String url) { return false; }
+            public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                // 更新包链接：绝不让 WebView 去“渲染”APK，转给系统浏览器下载
+                try {
+                    if (url != null && url.contains("/api/apk")) {
+                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i);
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+                return false;
+            }
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView v, android.webkit.WebResourceRequest req) {
