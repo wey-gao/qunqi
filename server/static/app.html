@@ -1815,7 +1815,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.6', UP_URL = '';
+var APP_VER = '0.53.7', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -1839,6 +1839,21 @@ async function checkVersion(){
     if(skip && !verGt(av, skip)){ $('upBar').style.display='none'; return; }
     showUpdate(av, d.apk_url, d.notes);
   }catch(e){}
+}
+
+function softReload(){
+  /* APK 的页面是 loadDataWithBaseURL 加载的，location.reload() 会静默失败，这里改为原地重建 */
+  try{ if(typeof ws!=='undefined' && ws){ ws.onclose=null; ws.onmessage=null; ws.close(); } }catch(e){}
+  DEV = LS.getItem('gw_device') || DEV || '';
+  SECRET = LS.getItem('gw_secret') || '';
+  ME = {uid:0, name:'', kind:'user', code:''};
+  NAMES = {};
+  LAST_TS = 0; LAST_SENDER = null;
+  var lst = $('list'); if(lst) lst.innerHTML='';
+  closeSheets(true);
+  setState(false,'连接中');
+  try{ if(typeof refreshConvs==='function') refreshConvs(); }catch(e){}
+  setTimeout(function(){ try{ connect(); }catch(e){} }, 120);
 }
 
 function connect(){
@@ -3289,7 +3304,7 @@ $('btnRestoreCode').onclick=async function(){
     LS.setItem('gw_onboarded','1');
     closeSheets();
     toast('已恢复，正在重载…');
-    setTimeout(function(){ location.reload(); }, 700);
+    setTimeout(softReload, 500);
   }catch(e){ toast('恢复失败'); }
 };
 $('btnIdentity').onclick=function(){ openSheet('sheetIdentity'); loadIdentity(); };
@@ -3343,7 +3358,7 @@ $('cfCodeOk').onclick=async function(){
     LS.setItem('gw_onboarded','1');
     closeSheets();
     toast('已恢复，正在重载…');
-    setTimeout(function(){ location.reload(); },800);
+    setTimeout(softReload, 500);
   }catch(e){ toast('恢复失败'); }
 };
 $('obSkip').onclick=function(){ LS.setItem('gw_onboarded','1'); closeSheets(true); };
