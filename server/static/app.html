@@ -57,7 +57,7 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 .hbtn:hover svg{stroke:var(--accent)}
 #menuBtn{display:none}
 
-#list{flex:1;overflow-y:auto;padding:14px 14px 150px;min-height:0;scroll-behavior:smooth}
+#list{flex:1;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;overscroll-behavior-x:none;padding:14px 14px 150px;min-height:0;scroll-behavior:smooth}
 .day{text-align:center;color:var(--dim);font-size:11.5px;margin:8px 0 14px}
 .row{display:flex;gap:8px;margin-bottom:12px;align-items:flex-end}
 .row.user{flex-direction:row-reverse}
@@ -374,7 +374,8 @@ header{height:54px;background:var(--panel);border-bottom:1px solid color-mix(in 
 
 #list,body,#app{scrollbar-width:none;-ms-overflow-style:none}
 #list::-webkit-scrollbar,body::-webkit-scrollbar{width:0;height:0;display:none}
-#side,#app{overflow-x:hidden}
+#side,#app,#main,#list,#composer{overflow-x:hidden}
+html,body{overflow-x:hidden;overscroll-behavior-x:none;max-width:100vw}
 
 
 .sheet{box-shadow:none!important}
@@ -1183,7 +1184,7 @@ body.hasbg{background:transparent!important}
       <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="14" step="1"><output id="bgBlurV"></output></div>
       <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-60" max="60" step="1"><output id="bgXV"></output></div>
       <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-60" max="60" step="1"><output id="bgYV"></output></div>
-      <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
+      <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="0.6" max="1.8" step="0.01"><output id="bgZoomV"></output></div>
       <div class="sld"><label>背景角度</label><input type="range" id="bgRot" min="0" max="180" step="1"><output id="bgRotV"></output></div>
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
       <button class="wbtn" id="btnBgZero" type="button">图片位置一键归零</button>
@@ -1458,7 +1459,7 @@ function applyState(){
   r.setProperty('--bgRot', rot+'deg');
   r.setProperty('--bgX', Math.max(-60, Math.min(60, Number(B.x||0)))+'%');
   r.setProperty('--bgY', Math.max(-60, Math.min(60, Number(B.y||0)))+'%');
-  r.setProperty('--bgZoom', String(Math.max(1, Math.min(2.6, Number(B.zoom||1.02)*cover))));
+  r.setProperty('--bgZoom', String(Math.max(0.55, Math.min(2.6, Number(B.zoom||1.02)*cover))));
   var bgEl = $('bg');
   if(B.url){ var su=bgStillUrl(B.url); bgEl.style.backgroundImage = 'url('+(_BGFREEZE[su]||su)+')'; bgEl.style.backgroundColor='transparent'; }
   else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
@@ -1560,7 +1561,7 @@ function applyBgOnly(){
   r.setProperty('--bgRot', rot+'deg');
   r.setProperty('--bgX', Math.max(-60, Math.min(60, Number(B.x||0)))+'%');
   r.setProperty('--bgY', Math.max(-60, Math.min(60, Number(B.y||0)))+'%');
-  r.setProperty('--bgZoom', String(Math.max(1, Math.min(2.6, Number(B.zoom||1.02)*cover))));
+  r.setProperty('--bgZoom', String(Math.max(0.55, Math.min(2.6, Number(B.zoom||1.02)*cover))));
   var bgEl = $('bg');
   if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
   else if(B.gradient){ bgEl.style.backgroundImage = 'linear-gradient(160deg,'+B.gradient[0]+','+B.gradient[1]+')'; }
@@ -2302,7 +2303,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.42', UP_URL = '';
+var APP_VER = '0.53.43', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
