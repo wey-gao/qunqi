@@ -573,13 +573,38 @@ body.tfont-serif #msgs,body.tfont-serif .sheet,body.tfont-serif #side{font-famil
 body.tfont-mono{--tm-font:ui-monospace,"SF Mono",Menlo,Consolas,"Noto Sans Mono CJK SC",monospace}
 body.tfont-mono #msgs,body.tfont-mono .sheet,body.tfont-mono #side{font-family:var(--tm-font);letter-spacing:.2px}
 body.tfont-round #msgs,body.tfont-round .sheet,body.tfont-round #side{font-family:"PingFang SC","HarmonyOS Sans SC","Noto Sans SC",system-ui,sans-serif;letter-spacing:.2px}
-.sheet.peek{opacity:.58;transition:opacity .18s ease}
+.sheet.peek{opacity:.42;transition:opacity .18s ease}
 .tcard .tag{display:block;font-size:10px;color:var(--dim);margin-top:2px}
+
+/* ===== 特色边框 ===== */
+body.tframe-none .bub{border:0!important}
+body.tframe-none #side,body.tframe-none .sheet{border-color:transparent!important}
+body.tframe-bold .bub{border:2px solid color-mix(in srgb,var(--ink) 45%,var(--line))!important;box-shadow:none!important}
+body.tframe-bold #side,body.tframe-bold .sheet{border-width:2px!important;border-color:color-mix(in srgb,var(--ink) 35%,var(--line))!important}
+body.tframe-neon .bub{border:1px solid color-mix(in srgb,var(--accent) 58%,transparent)!important;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 26%,transparent),0 0 14px color-mix(in srgb,var(--accent) 20%,transparent)!important}
+body.tframe-neon #side{border-right:2px solid color-mix(in srgb,var(--accent) 55%,transparent)!important}
+body.tframe-neon .sheet{border-left:2px solid color-mix(in srgb,var(--accent) 55%,transparent)!important}
+body.tframe-double .sheet,body.tframe-double #side{box-shadow:inset 0 0 0 1px var(--line),inset 0 0 0 4px color-mix(in srgb,var(--panel) 72%,transparent),inset 0 0 0 5px var(--line)}
+body.tframe-stitch .bub,body.tframe-stitch .sheet{border:1px dashed color-mix(in srgb,var(--line) 90%,transparent)!important}
+body.tframe-glass .sheet{box-shadow:inset 0 0 0 1px rgba(255,255,255,.6),0 24px 70px rgba(30,50,80,.20)!important}
+/* ===== 装饰元素 ===== */
+body.tdeco-corners .sheet{background-image:linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent));background-repeat:no-repeat;background-size:16px 2px,2px 16px,16px 2px,2px 16px,16px 2px,2px 16px,16px 2px,2px 16px;background-position:12px 12px,12px 12px,calc(100% - 12px) 12px,calc(100% - 12px) 12px,12px calc(100% - 12px),12px calc(100% - 12px),calc(100% - 12px) calc(100% - 12px),calc(100% - 12px) calc(100% - 12px);background-color:inherit}
+body.tdeco-ticks #side{background-image:repeating-linear-gradient(180deg,transparent 0 16px,color-mix(in srgb,var(--accent) 26%,transparent) 16px 17px);background-repeat:no-repeat;background-size:5px 100%;background-position:3px 0}
+body.tdeco-hud .sheet{background-image:linear-gradient(color-mix(in srgb,var(--accent) 45%,transparent),color-mix(in srgb,var(--accent) 45%,transparent)),linear-gradient(color-mix(in srgb,var(--accent) 45%,transparent),color-mix(in srgb,var(--accent) 45%,transparent));background-repeat:no-repeat;background-size:26px 2px,2px 26px;background-position:10px 10px,10px 10px;background-color:inherit}
+body.tdeco-scan #composer{box-shadow:0 -1px 0 color-mix(in srgb,var(--accent) 40%,transparent),0 -14px 34px -22px color-mix(in srgb,var(--accent) 55%,transparent)!important}
+body.tdeco-seal .sheet::after{content:'群栖';position:absolute;right:16px;bottom:18px;width:46px;height:46px;display:grid;place-items:center;font-size:13px;letter-spacing:2px;color:color-mix(in srgb,var(--accent) 78%,var(--ink));border:1.5px solid color-mix(in srgb,var(--accent) 55%,transparent);border-radius:6px;transform:rotate(-8deg);opacity:.6;pointer-events:none}
+/* ===== 背景拖动层 ===== */
+#bgDrag{position:fixed;inset:0;z-index:22;display:none;touch-action:none;cursor:grab}
+#bgDrag.on{display:block}
+#bgDrag.grabbing{cursor:grabbing}
+#bgDragHint{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:23;background:rgba(10,16,24,.72);color:#fff;font-size:12px;padding:6px 10px;border-radius:8px;display:none}
 </style>
 </head>
 <body>
 <div id="bg"></div><div id="bgOverlay"></div>
 <div id="texLayer"></div>
+<div id="bgDrag"></div>
+<div id="bgDragHint">按住拖动背景，双指可微调</div>
 
 <div id="app">
   <aside id="side">
@@ -1029,16 +1054,14 @@ body.tfont-round #msgs,body.tfont-round .sheet,body.tfont-round #side{font-famil
       <div class="sld"><label>亮度</label><input type="range" id="bgBright" min="0.2" max="1.3" step="0.02"><output id="bgBrightV"></output></div>
       <div class="sld"><label>遮罩</label><input type="range" id="bgOverlayR" min="0" max="0.9" step="0.02"><output id="bgOverlayV"></output></div>
       <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="24" step="1"><output id="bgBlurV"></output></div>
-      <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-15" max="15" step="1"><output id="bgXV"></output></div>
-      <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-15" max="15" step="1"><output id="bgYV"></output></div>
+      <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-60" max="60" step="1"><output id="bgXV"></output></div>
+      <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-60" max="60" step="1"><output id="bgYV"></output></div>
       <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="1" max="1.6" step="0.01"><output id="bgZoomV"></output></div>
       <div class="sld"><label>背景角度</label><input type="range" id="bgRot" min="0" max="180" step="1"><output id="bgRotV"></output></div>
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
       <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
       <button class="wbtn" id="btnPureWhite" type="button">一键纯白简约</button>
-      <div style="margin:12px 0 6px;font-size:12px;color:var(--dim)">内置动图背景 · 随包装在 App 里，秒开不走流量，只在本机生效</div>
-      <div id="builtinBgRow" style="display:flex;gap:8px"></div>
       <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
       <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>
       <div class="sld"><label>字体颜色</label><input type="color" id="fontColor" style="width:56px;height:30px;padding:0;border:none;background:none"><output id="fontColorV" style="min-width:64px">默认</output></div>
@@ -1308,8 +1331,8 @@ function applyState(){
   var cover = Math.max((_vW*_c + _vH*_sn)/_vW, (_vW*_sn + _vH*_c)/_vH);
   cover = Math.min(2.6, Math.max(1, cover));
   r.setProperty('--bgRot', rot+'deg');
-  r.setProperty('--bgX', Math.max(-30, Math.min(30, Number(B.x||0)))+'%');
-  r.setProperty('--bgY', Math.max(-30, Math.min(30, Number(B.y||0)))+'%');
+  r.setProperty('--bgX', Math.max(-60, Math.min(60, Number(B.x||0)))+'%');
+  r.setProperty('--bgY', Math.max(-60, Math.min(60, Number(B.y||0)))+'%');
   r.setProperty('--bgZoom', String(Math.max(1, Math.min(2.6, Number(B.zoom||1.02)*cover))));
   var bgEl = $('bg');
   if(B.url){ bgEl.style.backgroundImage = 'url('+B.url+')'; bgEl.style.backgroundColor='transparent'; }
@@ -1322,8 +1345,8 @@ function applyState(){
     pv.style.backgroundColor = (S.bg.url||S.bg.gradient) ? 'transparent' : 'var(--panel2)';
   }
   var vv = (t && t.v) || {};
-  var cls = document.body.className.split(' ').filter(function(x){ return x && x.indexOf('tstyle-')!==0 && x.indexOf('ttex-')!==0 && x.indexOf('tbub-')!==0 && x.indexOf('tfont-')!==0; }).join(' ');
-  cls += ' tstyle-'+(vv.style||'solid')+' tbub-'+(vv.bubble||'round')+' tfont-'+(vv.font||'sans');
+  var cls = document.body.className.split(' ').filter(function(x){ return x && x.indexOf('tstyle-')!==0 && x.indexOf('ttex-')!==0 && x.indexOf('tbub-')!==0 && x.indexOf('tfont-')!==0 && x.indexOf('tframe-')!==0 && x.indexOf('tdeco-')!==0; }).join(' ');
+  cls += ' tstyle-'+(vv.style||'solid')+' tbub-'+(vv.bubble||'round')+' tfont-'+(vv.font||'sans')+' tframe-'+(vv.frame||'hairline')+' tdeco-'+(vv.deco||'none');
   document.body.className = cls.trim();
   var tex = vv.tex||'none';
   var tl = $('texLayer');
@@ -2049,7 +2072,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.30', UP_URL = '';
+var APP_VER = '0.53.31', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2859,22 +2882,33 @@ $('fontSwatch').onclick = function(e){
   toast(c ? '字体颜色已更新' : '已恢复主题默认文字色');
 };
 (function(){
-  var row=$('builtinBgRow'); if(!row) return;
-  var ORIGIN = location.origin;
-  var list=[{f:'bg1',n:'波光缓推'},{f:'bg2',n:'下潜流动'},{f:'bg3',n:'轻浮动'}];
-  row.innerHTML = list.map(function(x){
-    return '<button type="button" data-f="'+x.f+'" style="flex:1;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0b2a3a url('+ORIGIN+'/builtin/'+x.f+'-thumb.webp) center/cover;height:96px;position:relative">'+
-      '<span style="position:absolute;left:0;right:0;bottom:0;padding:4px 0;font-size:12px;color:#eaf6ff;background:rgba(8,20,28,.55)">'+x.n+'</span></button>';
-  }).join('');
-  row.onclick = function(e){
-    var b=e.target.closest?e.target.closest('button'):null; if(!b) return;
-    var f=b.getAttribute('data-f');
-    S.bg.url = ORIGIN+'/builtin/'+f+'.webp';
-    S.bg.gradient = null;
-    saveSettings({bg:{url:S.bg.url, gradient:null}});
-    applyState(); syncSheet();
-    toast('已应用内置动图背景（仅本机）');
-  };
+  var drag=$('bgDrag'), hint=$('bgDragHint'); if(!drag) return;
+  var on=false, sx=0, sy=0, bx=0, by=0;
+  function show(v){
+    if(v){ drag.classList.add('on'); hint.style.display='block'; setTimeout(function(){ hint.style.display='none'; },2600); }
+    else { drag.classList.remove('on'); hint.style.display='none'; }
+  }
+  window.__bgDragShow = show;
+  drag.addEventListener('pointerdown', function(e){
+    on=true; drag.classList.add('grabbing');
+    sx=e.clientX; sy=e.clientY; bx=Number(S.bg.x||0); by=Number(S.bg.y||0);
+    try{ drag.setPointerCapture(e.pointerId); }catch(err){}
+  });
+  drag.addEventListener('pointermove', function(e){
+    if(!on) return;
+    var W=window.innerWidth||430, H=window.innerHeight||930;
+    S.bg.x = Math.max(-60, Math.min(60, bx + (e.clientX-sx)/W*100));
+    S.bg.y = Math.max(-60, Math.min(60, by + (e.clientY-sy)/H*100));
+    $('bgX').value=S.bg.x; $('bgXV').textContent=Math.round(S.bg.x);
+    $('bgY').value=S.bg.y; $('bgYV').textContent=Math.round(S.bg.y);
+    applyState();
+  });
+  function up(){
+    if(!on) return; on=false; drag.classList.remove('grabbing');
+    saveSettings({bg:{x:S.bg.x, y:S.bg.y}});
+  }
+  drag.addEventListener('pointerup', up);
+  drag.addEventListener('pointercancel', up);
 })();
 $('btnPureWhite').onclick = async function(){
   try{
@@ -3001,16 +3035,7 @@ $('btnUpBg').onclick = function(){ $('pickerBg').click(); };
 $('pickerBg').onchange = async function(){
   var f=$('pickerBg').files[0]; if(!f) return;
   $('pickerBg').value='';
-  // GIF/WebP 动图直传，不进编辑器（进编辑器会被 canvas 压成静态首帧）
-  if(isAnimImage(f)){
-    try{
-      var meta0=await upload(f, f.name||('bg-'+Date.now()+'.webp'), f.type||'image/webp');
-      await saveSettings({bg:{url:'/media/'+meta0.file_id, gradient:null}});
-      applyState(); syncSheet();
-      toast('动态背景已更新');
-    }catch(e){ toast('背景上传失败'); }
-    return;
-  }
+  if(isAnimImage(f)) toast('动图已关闭，会以首帧保存为静态背景');
   var ratio = (window.innerWidth||430) / (window.innerHeight||930);   // 按屏幕比例裁
   openEditor(f, async function(meta){
     await saveSettings({bg:{url:'/media/'+meta.file_id}});
@@ -3088,10 +3113,12 @@ function sheetUI(id){
   else { $('mask').classList.remove('show'); }
 }
 function openSheet(id){
+  if(id==='sheetTheme' && window.__bgDragShow) window.__bgDragShow(true);
   sheetUI(id);
   if(!sheetOpen){ sheetOpen = true; history.pushState({sheet:id}, ''); }
 }
 function closeSheets(fromPop){
+  if(window.__bgDragShow) window.__bgDragShow(false);
   sheetUI(null); sheetOpen = false;
   if(!fromPop && history.state && history.state.sheet){ history.back(); }
 }
@@ -3391,20 +3418,7 @@ $('btnGroupBg').onclick = function(){
 $('pickerGroupBg').onchange = async function(){
   var f=$('pickerGroupBg').files[0]; if(!f) return;
   $('pickerGroupBg').value='';
-  // 群背景同样支持动图：动图直传，不动它
-  if(isAnimImage(f)){
-    try{
-      var metaA=await upload(f, f.name||('group-bg-'+Date.now()+'.webp'), f.type||'image/webp');
-      var rA=await fetch('/api/convs/'+encodeURIComponent(current)+'/bg',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({url:'/media/'+metaA.file_id, gradient:null, device:DEV})});
-      if(!rA.ok){ toast('设置失败：仅管理员可改'); return; }
-      var dA=await rA.json();
-      CONVS.forEach(function(c){ if(c.id===current) c.bg=dA.bg; });
-      applyState(); openGroupSheet(); toast('群动图背景已更新，全群生效');
-    }catch(e){ toast('群背景上传失败'); }
-    return;
-  }
+  if(isAnimImage(f)) toast('动图已关闭，会以首帧保存为静态群背景');
   var ratio = (window.innerWidth||430)/(window.innerHeight||930);
   openEditor(f, async function(meta){
     var r = await fetch('/api/convs/'+encodeURIComponent(current)+'/bg',{method:'POST',
