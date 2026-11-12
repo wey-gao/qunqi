@@ -1881,18 +1881,29 @@ APP_VERSION = os.getenv("APP_VERSION") or _read_ver_file("APP_VERSION") or BACKE
 
 @app.get("/api/apk")
 async def api_apk():
-    """固定下载地址，避免 CDN 临时链接过期导致更新失败。"""
+    """固定下载地址，避免 CDN 临时链接过期导致更新失败。
+    文件名带版本号并禁用缓存，浏览器/下载器才不会拿旧包当新包装上。"""
     p = STATIC / "AI-Chat.apk"
     if not p.exists():
         raise HTTPException(404, "APK 未上传")
-    return FileResponse(p, media_type="application/vnd.android.package-archive", filename="AI-Chat.apk")
+    ver = str(get_setting("app_version", APP_VERSION) or APP_VERSION).strip() or "latest"
+    ver = "".join(ch for ch in ver if ch.isalnum() or ch in "._-")
+    return FileResponse(p, media_type="application/vnd.android.package-archive",
+                        filename=f"Qunqi-v{ver}.apk",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                                 "Pragma": "no-cache"})
 
 
 @app.get("/api/version")
 async def api_version():
+    av = get_setting("app_version", APP_VERSION)
+    apk_url = get_setting("apk_url", "")
+    if apk_url and "?" not in apk_url:
+        # 带版本号查询串，绕过客户端和中间缓存
+        apk_url = apk_url + "?v=" + str(av)
     return {"version": BACKEND_VERSION,
-            "app_version": get_setting("app_version", APP_VERSION),
-            "apk_url": get_setting("apk_url", ""),
+            "app_version": av,
+            "apk_url": apk_url,
             "notes": get_setting("apk_notes", ""),
             "pushed_at": get_setting("apk_pushed_at", 0),
             **_apk_sha()}
