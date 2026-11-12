@@ -77,6 +77,7 @@ _up_rl: dict = {}
 
 app = FastAPI(title="AI Chat Gateway")
 
+_RST_GLOBAL = [0, 0]
 SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api/status", "/api/restore"}
 DOC_EXEMPT_PREFIX = "/api/docs/"
 
@@ -138,7 +139,9 @@ async def secret_guard(request: Request, call_next):
     if device:
         touch_device(device)
         if device in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
-            if BOT_TOKEN and secret != BOT_TOKEN:
+            if not BOT_TOKEN:
+                return JSONResponse({"detail": "服务器未配置 BOT_TOKEN，禁止使用 AI 身份"}, status_code=403)
+            if secret != BOT_TOKEN:
                 return JSONResponse({"detail": "AI 口令不正确"}, status_code=403)
         else:
             stored = secret_of(device)
@@ -2401,14 +2404,10 @@ async def api_me(request: Request, device: str = "", kind: str = "user"):
     if not device:
         raise HTTPException(400, "缺少 device")
     if secret_of(device):
-        try:
-            require_req_device(request, device)
-            return device_profile(device, "", kind)
-        except HTTPException:
-            if PUBLIC_MODE:
-                raise
-            # 自用模式：重装后本地只剩设备号，允许重新下发密钥，否则聊天记录全丢
-            return device_profile(device, "", kind, with_secret=True)
+        require_req_device(request, device)
+        return device_profile(device, "", kind)
+    # 设备号在服务端不存在：首次启动自动注册并下发一次密钥；
+    # 已存在且密钥不对的情况上面已抛出 403，不再凭设备号补发。
     return device_profile(device, "", kind, with_secret=True)
 
 
@@ -2418,6 +2417,11 @@ async def api_restore(request: Request):
     ip = request.client.host if request.client else "?"
     key = "rst:" + ip
     now = int(time.time())
+    gwin = _RST_GLOBAL
+    if now - gwin[0] >= 600:
+        _RST_GLOBAL[0], _RST_GLOBAL[1] = now, 0
+    if _RST_GLOBAL[1] >= 15:
+        raise HTTPException(429, "恢复码尝试次数过多，请十分钟后再试")
     win = _up_rl.get(key) or (0, 0)
     if now - win[0] >= 600:
         win = (now, 0)
@@ -2432,6 +2436,7 @@ async def api_restore(request: Request):
     old = conn.execute("SELECT device_id FROM ident WHERE code=?", (code,)).fetchone()
     if old is None:
         conn.close()
+        _RST_GLOBAL[1] += 1
         raise HTTPException(404, "身份码不存在")
     old_dev = old["device_id"]
     old_row = conn.execute("SELECT * FROM device WHERE device_id=?", (old_dev,)).fetchone()
@@ -2462,6 +2467,7 @@ async def api_restore(request: Request):
         conn.close()
     conn = db()
     conn.close()
+    _RST_GLOBAL[1] = 0
     return {"ok": True, **prof}
 
 
@@ -3365,7 +3371,11 @@ async def ws_endpoint(ws: WebSocket):
         _exp = secret_of(_dev)
         if not _exp and _dev in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
             _exp = BOT_TOKEN
-        if _exp and _sec != _exp:
+        if not _exp:
+            await ws.send_text(json.dumps({"t": "error", "msg": "设备未注册，请重新登录"}, ensure_ascii=False))
+            await ws.close(code=4403)
+            return
+        if _sec != _exp:
             await ws.send_text(json.dumps({"t": "error", "msg": "设备密钥不正确，请重新登录"}, ensure_ascii=False))
             await ws.close(code=4403)
             return

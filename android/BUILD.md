@@ -12,7 +12,7 @@ javac -source 8 -target 8 -encoding UTF-8 -classpath $ANDROID_JAR -d build/class
 d8 --min-api 21 --lib $ANDROID_JAR --output build/dex $(find build/classes -name '*.class')
 cp build/base.apk build/unsigned.apk && cd build && zip -j unsigned.apk dex/classes.dex
 zipalign -f 4 unsigned.apk aligned.apk
-apksigner sign --ks aichat.keystore --ks-pass pass:aichat123 --key-pass pass:aichat123 --out ../AI-Chat.apk aligned.apk
+KS_PASS=你的密钥库口令 apksigner sign --ks aichat.keystore --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --out ../AI-Chat.apk aligned.apk
 ```
 
 注意：`AndroidManifest.xml` 必须显式写 `android:versionCode`，否则部分 ROM 会判定安装包损坏；每版同时更新页面里的 `APP_VER`。
