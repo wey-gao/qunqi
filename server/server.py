@@ -3047,16 +3047,30 @@ async def thumb(fid: str, w: int = 128):
     w = max(32, min(int(w), 512))
     src = pathlib.Path(row["path"])
     THUMBS.mkdir(parents=True, exist_ok=True)
-    cache = THUMBS / f"{fid}-{w}.jpg"
+    # 先判断源图是否带透明通道：带就出 PNG 缩略图，别把透明背景压成黑/白底
+    alpha = False
+    try:
+        from PIL import Image
+        probe = Image.open(src)
+        alpha = probe.mode in ("RGBA", "LA") or (probe.mode == "P" and "transparency" in probe.info)
+        probe.close()
+    except Exception:
+        alpha = str(row["mime"]) == "image/png"
+    ext = "png" if alpha else "jpg"
+    cache = THUMBS / f"{fid}-{w}.{ext}"
     if not cache.exists():
         try:
             from PIL import Image
-            im = Image.open(src).convert("RGB")
+            im = Image.open(src)
+            im = im.convert("RGBA" if alpha else "RGB")
             im.thumbnail((w, w))
-            im.save(cache, "JPEG", quality=84, optimize=True)
+            if alpha:
+                im.save(cache, "PNG", optimize=True)
+            else:
+                im.save(cache, "JPEG", quality=84, optimize=True)
         except Exception:
             return FileResponse(src)
-    return FileResponse(cache, media_type="image/jpeg",
+    return FileResponse(cache, media_type=("image/png" if alpha else "image/jpeg"),
                         headers={"Cache-Control": "public, max-age=604800"})
 
 

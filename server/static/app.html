@@ -1963,7 +1963,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.20', UP_URL = '';
+var APP_VER = '0.53.21', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2395,7 +2395,7 @@ function openEditor(blob, onDone, opts){
   var url = URL.createObjectURL(blob);
   var img = new Image();
   img.onload = function(){
-    eState.img = img; eState.rot=0; eState.flip=false; eState.square=!!opts.square;
+    eState.img = img; eState.type = (blob && blob.type) || ''; eState.rot=0; eState.flip=false; eState.square=!!opts.square;
     eState.aspect = opts.aspect || 0;
     eState.bright=0; eState.contrast=0; eState.sat=0; eState.filt='none'; eState.quality=0.82; eState.maxSide=0;
     $('eBright').value=0; $('eContrast').value=0; $('eSat').value=0;
@@ -2496,9 +2496,12 @@ $('eDone').onclick = function(){
     out.width = Math.round(src.width*k); out.height = Math.round(src.height*k);
     out.getContext('2d').drawImage(src, 0, 0, out.width, out.height);
   }
+  // PNG/WebP/GIF 走 PNG 导出，避免 JPEG 把透明背景变成黑底或白底
+  var alpha = /image\/(png|webp|gif)/i.test(eState.type || '');
+  var mime = alpha ? 'image/png' : 'image/jpeg';
   out.toBlob(function(blob){
-    var name = 'edit-'+Date.now()+'.jpg';
-    upload(blob, name, 'image/jpeg').then(function(meta){
+    var name = 'edit-'+Date.now()+(alpha ? '.png' : '.jpg');
+    upload(blob, name, mime).then(function(meta){
       meta.kind='image';
       var cb = editing.onDone, isAvatar = editing.opts && editing.opts.avatar;
       closeEditor(); cb(meta);
@@ -2506,7 +2509,7 @@ $('eDone').onclick = function(){
     }).catch(function(e){
       toast('图片上传失败，请检查网络或登录状态');
     });
-  }, 'image/jpeg', eState.quality || 0.82);
+  }, mime, alpha ? undefined : (eState.quality || 0.82));
 };
 
 $('btnFile').onclick = function(){ $('picker').click(); };
