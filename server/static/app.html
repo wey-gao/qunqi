@@ -1007,8 +1007,18 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
       <div class="bgpv" id="bgPv"><span>当前背景</span></div>
       <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
       <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
+      <button class="wbtn" id="btnPureWhite" type="button">一键纯白简约</button>
       <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
-      <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>      <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>      <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
+      <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>
+      <div class="sld"><label>字体颜色</label><input type="color" id="fontColor" style="width:56px;height:30px;padding:0;border:none;background:none"><output id="fontColorV" style="min-width:64px">默认</output></div>
+      <div class="swrow" id="fontSwatch" style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px">
+        <button type="button" class="sw" data-c="" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:linear-gradient(135deg,#111 50%,#fff 50%)"></button>
+        <button type="button" class="sw" data-c="#111318" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#111318"></button>
+        <button type="button" class="sw" data-c="#3b4252" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#3b4252"></button>
+        <button type="button" class="sw" data-c="#12b7f5" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#12b7f5"></button>
+        <button type="button" class="sw" data-c="#e8ecf1" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#e8ecf1"></button>
+        <button type="button" class="sw" data-c="#7a4fd4" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#7a4fd4"></button>
+      </div>      <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>      <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
     </div>
   </div>
 </div>
@@ -1251,6 +1261,8 @@ function applyState(){
     r.setProperty('--accent', t.v.accent); r.setProperty('--user', t.v.user); r.setProperty('--ai', t.v.ai);
   }
   r.setProperty('--fs', (S.font.size||15)+'px');
+  var fc = S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'') ? S.font.color : '';
+  if(fc){ r.setProperty('--ink', fc); }
   var meta = document.querySelector('meta[name=theme-color]');
   if(meta && t && t.v) meta.setAttribute('content', t.v.panel);
   r.setProperty('--radius', (S.bubble.radius||14)+'px');
@@ -1982,7 +1994,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.27', UP_URL = '';
+var APP_VER = '0.53.28', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2725,6 +2737,9 @@ function syncSheet(){
   $('bgY').value = S.bg.y||0; $('bgYV').textContent = $('bgY').value;
   $('bgZoom').value = S.bg.zoom||1.02; $('bgZoomV').textContent = Number($('bgZoom').value).toFixed(2);
   $('fontSize').value = S.font.size; $('fontSizeV').textContent = S.font.size;
+  var fcv = (S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'')) ? S.font.color : '';
+  if($('fontColor')){ $('fontColor').value = fcv || '#111318'; }
+  if($('fontColorV')){ $('fontColorV').textContent = fcv || '默认'; }
   $('bubR').value = S.bubble.radius; $('bubRV').textContent = S.bubble.radius;
   var bo = S.bubble.opacity == null ? 1 : +S.bubble.opacity;
   $('bubO').value = bo; $('bubOV').textContent = Math.round(bo*100)+'%';
@@ -2758,6 +2773,25 @@ $('bgY').oninput = function(e){ S.bg.y=+e.target.value; $('bgYV').textContent=e.
 $('bgY').onchange = function(){ saveSettings({bg:{y:S.bg.y}}); };
 $('bgZoom').oninput = function(e){ S.bg.zoom=+e.target.value; $('bgZoomV').textContent=(+e.target.value).toFixed(2); applyState(); };
 $('bgZoom').onchange = function(){ saveSettings({bg:{zoom:S.bg.zoom}}); };
+$('fontColor').onchange = function(e){
+  S.font.color = e.target.value; syncSheet(); applyState();
+  saveSettings({font:{color:e.target.value}});
+};
+$('fontSwatch').onclick = function(e){
+  var b = e.target.closest ? e.target.closest('button') : null; if(!b) return;
+  var c = b.getAttribute('data-c') || '';
+  if(!S.font) S.font={size:15};
+  S.font.color = c; syncSheet(); applyState();
+  saveSettings({font:{color:c}});
+  toast(c ? '字体颜色已更新' : '已恢复主题默认文字色');
+};
+$('btnPureWhite').onclick = async function(){
+  try{
+    await saveSettings({theme:'light_clean', bg:{url:'',gradient:null,brightness:1,overlay:0,blur:0,zoom:1,x:0,y:0}, font:{color:''}, bubble:{opacity:1}});
+    S.bg.url=''; S.bg.gradient=null; S.font.color=''; applyState(); syncSheet();
+    toast('已切换到纯白简约');
+  }catch(e){ toast('切换失败'); }
+};
 $('fontSize').oninput = function(e){ S.font.size=+e.target.value; $('fontSizeV').textContent=e.target.value; applyState(); };
 $('fontSize').onchange = function(){ saveSettings({font:{size:S.font.size}}); };
 $('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyState(); };

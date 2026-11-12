@@ -218,7 +218,7 @@ DEFAULT_UI = {
     "avatar": {"url": "", "shape": "circle", "size": 44, "removeBg": False,
                "border": 2, "borderColor": "#12b7f5", "px": 50, "py": 50},
     "bubble": {"radius": 14, "opacity": 1.0},
-    "font": {"size": 15},
+    "font": {"size": 15, "color": ""},
 }
 
 
@@ -2104,6 +2104,8 @@ async def put_settings(request: Request, device: str = ""):
     st["bg"]["overlay"] = max(0, min(0.9, float(st["bg"]["overlay"])))
     st["bg"]["blur"] = max(0, min(24, int(st["bg"]["blur"])))
     st["font"]["size"] = max(13, min(20, int(st["font"]["size"])))
+    fcol = str(st["font"].get("color") or "").strip()
+    st["font"]["color"] = fcol if re.match(r"^#[0-9a-fA-F]{6}$", fcol) else ""
     if json.dumps(st, sort_keys=True, ensure_ascii=False) == json.dumps(ui_state(), sort_keys=True, ensure_ascii=False):
         return {"ok": True, "settings": st, "unchanged": True, "avatar_ignored": avatar_ignored}
     set_setting("ui", st)
