@@ -546,6 +546,9 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink)}
 #sheetOnboard .obrow{align-items:flex-start}
 #sheetOnboard .obav{margin-top:2px}
+#upBar{position:fixed;left:0;right:0;top:0;height:3px;display:none;z-index:99;background:transparent}
+#upBar div{height:3px;width:0;background:var(--accent);transition:width .2s}
+#upBar span{position:absolute;right:8px;top:6px;font-size:11px;color:var(--dim);background:var(--panel);padding:2px 6px;border-radius:8px}
 </style>
 </head>
 <body>
@@ -900,10 +903,26 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
   <div class="body"><div id="fwdList"></div></div>
 </div>
 
+<div id="upBar"><div></div><span></span></div>
+<div class="sheet" id="sheetFavs">
+  <header><b>收藏</b><button class="close" data-close>×</button></header>
+  <div class="body"><div id="favList"></div></div>
+</div>
+
 <div class="sheet" id="sheetSearch">
   <header><b>聊天记录检索</b><button class="close" data-close>×</button></header>
   <div class="body">
     <input id="qInput" placeholder="搜索文字、文件名…" autocomplete="off">
+    <div class="sfMini" id="qFilters" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
+      <button type="button" data-qf="who" data-qv="" class="qfOn">所有人</button>
+      <button type="button" data-qf="who" data-qv="me">只看我</button>
+      <button type="button" data-qf="kind" data-qv="" class="qfOn">全部类型</button>
+      <button type="button" data-qf="kind" data-qv="image">图片</button>
+      <button type="button" data-qf="kind" data-qv="file">含附件</button>
+      <button type="button" data-qf="days" data-qv="" class="qfOn">不限时间</button>
+      <button type="button" data-qf="days" data-qv="7">近 7 天</button>
+      <button type="button" data-qf="days" data-qv="30">近 30 天</button>
+    </div>
     <div class="qmeta" id="qMeta">输入关键词后回车</div>
     <div id="qList"></div>
   </div>
@@ -1812,11 +1831,22 @@ $('btnSearch').onclick=function(){
   openSheet('sheetSearch');
   setTimeout(function(){ $('qInput').focus(); }, 300);
 };
+var QF={who:'',kind:'',days:''};
+Array.prototype.forEach.call(document.querySelectorAll('#qFilters [data-qf]'), function(b){
+  b.onclick=function(){
+    var f=b.dataset.qf;
+    QF[f]=b.dataset.qv;
+    Array.prototype.forEach.call(document.querySelectorAll('#qFilters [data-qf="'+f+'"]'), function(x){ x.classList.remove('qfOn'); });
+    b.classList.add('qfOn');
+    if($('qInput').value.trim()) doSearch();
+  };
+});
 async function doSearch(){
-  var q=$('qInput').value.trim(); if(!q) return;
+  var q=$('qInput').value.trim(); if(!q && !QF.who && !QF.kind && !QF.days){ $('qMeta').textContent='输入关键词或选择筛选条件'; return; }
   $('qMeta').textContent='搜索中…';
   try{
-    var r=await fetch('/api/search?conv='+encodeURIComponent(current)+'&q='+encodeURIComponent(q)+'&device='+encodeURIComponent(DEV)+'&limit=60');
+    var r=await fetch('/api/search?conv='+encodeURIComponent(current)+'&q='+encodeURIComponent(q)+'&device='+encodeURIComponent(DEV)+'&limit=60'
+      +'&who='+encodeURIComponent(QF.who)+'&kind='+encodeURIComponent(QF.kind)+'&days='+encodeURIComponent(QF.days));
     if(!r.ok){ $('qMeta').textContent='没有权限或搜索失败'; return; }
     var d=await r.json();
     $('qMeta').textContent='找到 '+d.total+' 条（服务器最近 1000 条内）';
@@ -1896,7 +1926,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.10', UP_URL = '';
+var APP_VER = '0.53.11', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2165,6 +2195,13 @@ function renderChips(){
   });
 }
 
+function upProgress(pct){
+  var bar=$('upBar'), fill=bar.querySelector('div'), lab=bar.querySelector('span');
+  if(pct==null){ bar.style.display='none'; fill.style.width='0'; return; }
+  bar.style.display='block'; fill.style.width=Math.max(0,Math.min(100,pct))+'%';
+  lab.textContent='上传 '+Math.round(pct)+'%';
+}
+
 async function uploadChunked(file, name, mime){
   var CH = 4*1024*1024;
   var key = 'gw_up_'+encodeURIComponent(name)+'_'+file.size+'_'+(file.lastModified||0);
@@ -2191,8 +2228,8 @@ async function uploadChunked(file, name, mime){
       }catch(e){ n++; await new Promise(function(r){ setTimeout(r, 700*n); }); }
     }
     LS.setItem(key, JSON.stringify(st));
-    if(!ok) throw new Error('网络不稳，进度已保存，重新发送同一文件可续传');
-    if(st.idx % 5 === 0) toast('上传中 '+Math.round(st.idx*CH*100/file.size)+'%');
+    if(!ok){ upProgress(null); throw new Error('网络不稳，进度已保存，重新发送同一文件可续传'); }
+    upProgress(st.idx*CH*100/file.size);
   }
   var fin = await fetch('/api/files/chunk/'+encodeURIComponent(st.id)+'/finish', {method:'POST'});
   if(!fin.ok){
@@ -2200,6 +2237,7 @@ async function uploadChunked(file, name, mime){
     throw new Error(e2.detail || ('上传失败 '+fin.status));
   }
   LS.removeItem(key);
+  upProgress(null);
   var meta = await fin.json();
   if(meta.warn) toast(meta.warn);
   toast('上传完成');
@@ -3435,13 +3473,23 @@ $('input').addEventListener('input', function(){
 });
 
 /* ============ 身份码 / 多端漫游 ============ */
+function lastSeenText(ts){
+  if(!ts) return '从未活跃';
+  var d=Math.floor(Date.now()/1000 - ts);
+  if(d < 60) return '刚刚在线';
+  if(d < 3600) return Math.floor(d/60)+' 分钟前';
+  if(d < 86400) return Math.floor(d/3600)+' 小时前';
+  return Math.floor(d/86400)+' 天前';
+}
 async function loadIdentity(){
   refreshServerLabel();
   try{
     var dl = await (await fetch('/api/devices?device='+encodeURIComponent(DEV))).json();
     $('devList').innerHTML = (dl.items||[]).map(function(x){
       var tag = x.current ? '<span class="badge bot">当前</span>' : '<button class="mk" data-kick="'+esc(x.device_id)+'">下线</button>';
-      return '<div class="me" style="margin-top:4px"><span class="mn">'+esc(x.name||x.device_id)+'</span>'+tag+'</div>';
+      var st = x.online ? '<span style="color:var(--accent);font-size:11px">在线</span>'
+                        : '<span style="color:var(--dim);font-size:11px">'+lastSeenText(x.last_seen)+'</span>';
+      return '<div class="me" style="margin-top:4px"><span class="mn">'+esc(x.name||x.device_id)+' '+st+'</span>'+tag+'</div>';
     }).join('');
     Array.prototype.forEach.call($('devList').querySelectorAll('[data-kick]'), function(b){
       b.onclick = async function(){
@@ -3526,11 +3574,24 @@ $('btnExportConv').onclick=function(){
         +'&device='+encodeURIComponent(DEV)+'&secret='+encodeURIComponent(SECRET);
   try{ if(window.NativeOpen) NativeOpen.open(u); else location.href=u; }catch(e){ location.href=u; }
 };
-$('btnFavs').onclick=function(){
+$('btnFavs').onclick=function(){ renderFavs(); openSheet('sheetFavs'); };
+function renderFavs(){
   var favs=[]; try{ favs=JSON.parse(LS.getItem('gw_favs')||'[]'); }catch(e){}
-  if(!favs.length){ toast('还没有收藏'); return; }
-  openViewer('text', favs.map(function(f,i){ return (i+1)+'. ['+f.name+'] '+(f.text||'（无文字）'); }).join('\n\n'), '收藏（本机）');
-};
+  $('favList').innerHTML = favs.length ? favs.map(function(f,i){
+    return '<div class="qhit" style="display:flex;gap:8px;align-items:flex-start">'+
+      '<div style="flex:1"><b>'+esc(f.name||'')+' · '+fmtTime(new Date(f.ts||0))+'</b>'+
+      '<p>'+esc((f.text||'（无文字）').slice(0,120))+'</p></div>'+
+      '<button class="mk" data-favdel="'+i+'">删除</button></div>';
+  }).join('') : '<div class="qmeta">还没有收藏，长按消息可以收藏</div>';
+  Array.prototype.forEach.call($('favList').querySelectorAll('[data-favdel]'), function(b){
+    b.onclick=function(){
+      var favs=JSON.parse(LS.getItem('gw_favs')||'[]');
+      favs.splice(+b.dataset.favdel,1);
+      LS.setItem('gw_favs', JSON.stringify(favs));
+      renderFavs();
+    };
+  });
+}
 $('btnClearLocal').onclick=function(){
   try{
     Object.keys(LS._k||{}).forEach(function(k){ if(k.indexOf('gw_draft_')===0) LS.removeItem(k); });

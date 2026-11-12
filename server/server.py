@@ -215,7 +215,7 @@ REQUIRED = {
     "message": {"id", "conv", "sender", "role", "msg_type", "content", "seq", "ts"},
     "file": {"id", "name", "mime", "kind", "size", "path", "text_len", "note", "ts"},
     "setting": {"k", "v"},
-    "device": {"device_id", "uid", "name", "created_at", "secret", "avatar"},
+    "device": {"device_id", "uid", "name", "created_at", "secret", "avatar", "last_seen"},
 }
 
 
@@ -235,7 +235,7 @@ def migrate(conn) -> None:
                 ddl = {"invite": "TEXT", "owner": "INTEGER DEFAULT 0",
                        "mute_until": "INTEGER DEFAULT 0", "announce": "TEXT", "at_only": "INTEGER DEFAULT 0",
                        "pin": "TEXT", "num": "INTEGER DEFAULT 0", "deleted_at": "INTEGER DEFAULT 0",
-                       "avatar": "TEXT", "secret": "TEXT", "bg": "TEXT"}
+                       "avatar": "TEXT", "secret": "TEXT", "bg": "TEXT", "last_seen": "INTEGER DEFAULT 0"}
                 for col in missing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl.get(col, 'TEXT')}")
                 continue
@@ -2533,23 +2533,64 @@ async def api_agent_send(request: Request):
 
 
 @app.get("/api/search")
-async def api_search(conv: str = "u1001", q: str = "", device: str = "", limit: int = 60):
+async def api_search(conv: str = "u1001", q: str = "", device: str = "", limit: int = 60,
+                     who: str = "", kind: str = "", days: int = 0):
     require_member(conv, device)
+    uid = uid_by_device(device) or 0
     q = (q or "").strip()
-    if not q:
+    if not q and not who and not kind and not days:
         return {"items": [], "total": 0}
     conn = db()
-    rows = conn.execute(
-        "SELECT * FROM message WHERE conv=? AND content LIKE ? ORDER BY seq DESC LIMIT ?",
-        (conv, "%" + q + "%", min(limit, 100))).fetchall()
+    if q:
+        rows = conn.execute(
+            "SELECT * FROM message WHERE conv=? AND content LIKE ? ORDER BY seq DESC LIMIT ?",
+            (conv, "%" + q + "%", 1000)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM message WHERE conv=? ORDER BY seq DESC LIMIT 1000",
+                            (conv,)).fetchall()
     conn.close()
+    since = int(time.time()) - days * 86400 if days else 0
+    items = []
+    me = int(uid)
+    def _snum(x):
+        try:
+            return int(x)
+        except Exception:
+            return -1
+    for r in rows:
+        if since and _snum(r["ts"]) < since:
+            continue
+        if who == "me" and _snum(r["sender"]) != me:
+            continue
+        if who and who != "me" and _snum(r["sender"]) != int(who):
+            continue
+        try:
+            c = json.loads(r["content"] or "{}")
+        except Exception:
+            c = {}
+        has_img = bool(c.get("images")) or any((a or {}).get("kind") == "image" for a in (c.get("attachments") or []))
+        has_file = bool(c.get("attachments")) or bool(c.get("images"))
+        if kind == "image" and not has_img:
+            continue
+        if kind == "file" and not has_file:
+            continue
+        if kind == "text" and not (c.get("text") or "").strip():
+            continue
+        items.append(r)
+        if len(items) >= min(limit, 100):
+            break
+    rows = items
+    total = len(rows)
     items = []
     for r in rows:
-        c = json.loads(r["content"] or "{}")
+        try:
+            c = json.loads(r["content"] or "{}")
+        except Exception:
+            c = {}
         items.append({"seq": r["seq"], "sender": r["sender"], "role": r["role"],
                       "name": c.get("name") or (BOT_NAME if str(r["sender"]) == str(BOT_ID) else uid_name(str(r["sender"]))),
                       "text": (c.get("text") or "")[:200], "ts": r["ts"]})
-    return {"items": items, "total": len(items)}
+    return {"items": items, "total": total}
 
 
 def _copy_payload(src: dict) -> dict:
@@ -2965,14 +3006,32 @@ async def do_removebg(fid: str, request: Request):
     return file_meta(_file_row(new_id))
 
 
+def touch_device(dev: str) -> None:
+    if not dev:
+        return
+    try:
+        conn = db()
+        conn.execute("UPDATE device SET last_seen=? WHERE device_id=?", (int(time.time()), dev))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
 @app.get("/api/devices")
 async def my_devices(device: str = ""):
     uid = require_device(device)
     conn = db()
-    rows = conn.execute("SELECT device_id,name,created_at FROM device WHERE uid=? ORDER BY created_at", (uid,)).fetchall()
+    rows = conn.execute("SELECT device_id,name,created_at,last_seen FROM device WHERE uid=? ORDER BY created_at", (uid,)).fetchall()
     conn.close()
-    return {"items": [{"device_id": r["device_id"], "name": r["name"],
-                       "created_at": r["created_at"], "current": r["device_id"] == device} for r in rows]}
+    online = set()
+    for socks in clients.values():
+        for sock in socks:
+            if getattr(sock, "device", ""):
+                online.add(sock.device)
+    items = [{"device_id": r["device_id"], "name": r["name"], "created_at": r["created_at"],
+              "last_seen": r["last_seen"] or 0, "online": r["device_id"] in online,
+              "current": r["device_id"] == device} for r in rows]
+    return {"items": items}
 
 
 @app.post("/api/devices/{dev}/kick")
@@ -3164,6 +3223,8 @@ async def ws_endpoint(ws: WebSocket):
         if conv.startswith("g") and uid not in members_of(conv) and conv != "g1001":
             conv = f"u{uid}"
         ws.uid = uid
+        ws.device = _dev
+        touch_device(_dev)
         clients.setdefault(conv, set()).add(ws)
         await ws.send_text(json.dumps({"t": "auth_ok", "bot": {"online": bot.online}, "conv": conv,
                                        "profile": {"uid": uid, "name": nick, "kind": prof.get("kind"),
