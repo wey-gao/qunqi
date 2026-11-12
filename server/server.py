@@ -1651,6 +1651,23 @@ def require_device(device: str) -> int:
     return int(row["uid"])
 
 
+def require_req_device(request: Request, device: str = "") -> tuple:
+    """从请求头/查询串取设备号与密钥并校验；缺设备号时按密钥反查。"""
+    dev = device or request.headers.get("x-device") or request.query_params.get("device", "")
+    sec = request.headers.get("x-device-secret") or request.query_params.get("secret", "")
+    if not dev and sec:
+        conn0 = db()
+        r0 = conn0.execute("SELECT device_id FROM device WHERE secret=?", (sec,)).fetchone()
+        conn0.close()
+        if r0:
+            dev = r0["device_id"]
+    uid = require_device(dev)
+    stored = secret_of(dev) or ""
+    if not sec or not stored or not secrets.compare_digest(sec, stored):
+        raise HTTPException(403, "设备密钥不正确")
+    return uid, dev
+
+
 def _read_ver_file(name: str) -> str:
     try:
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), name)) as f:
@@ -1791,6 +1808,15 @@ async def status():
 
 @app.post("/api/device")
 async def api_device(request: Request):
+    ip = request.client.host if request.client else "?"
+    key = "dev:" + ip
+    now = int(time.time())
+    win = _up_rl.get(key) or (0, 0)
+    if now - win[0] >= 60:
+        win = (now, 0)
+    if win[1] >= 15:
+        raise HTTPException(429, "注册过于频繁")
+    _up_rl[key] = (win[0], win[1] + 1)
     body = await request.json()
     prof = device_profile(body.get("device_id", ""), body.get("name", ""), body.get("kind", "user"))
     return prof
@@ -1894,7 +1920,9 @@ async def del_theme(tid: str, device: str = "", request: Request = None):
 @app.get("/api/convs")
 async def get_convs(request: Request, device: str = ""):
     remember_host(request)
-    uid = device_profile(device)["uid"] if device else 0
+    uid = 0
+    if device:
+        uid, _ = require_req_device(request, device)
     if uid:
         ensure_private(uid)
     return {"items": conv_list(uid), "net": net_info()}
@@ -2160,6 +2188,15 @@ async def api_me(device: str = "", kind: str = "user"):
 @app.post("/api/restore")
 async def api_restore(request: Request):
     """恢复码：把当前新设备绑到旧账号的 uid，数据、头像、昵称一起继承。"""
+    ip = request.client.host if request.client else "?"
+    key = "rst:" + ip
+    now = int(time.time())
+    win = _up_rl.get(key) or (0, 0)
+    if now - win[0] >= 600:
+        win = (now, 0)
+    if win[1] >= 10:
+        raise HTTPException(429, "尝试次数过多，请十分钟后再试")
+    _up_rl[key] = (win[0], win[1] + 1)
     body = await request.json()
     code = (body.get("code") or "").strip().upper()
     if not code:
@@ -2630,7 +2667,17 @@ async def media(fid: str, request: Request):
 
 
 @app.post("/api/files/{fid}/removebg")
-async def do_removebg(fid: str):
+async def do_removebg(fid: str, request: Request):
+    require_req_device(request)
+    ip = request.client.host if request.client else "?"
+    key = "nobg:" + ip
+    now = int(time.time())
+    win = _up_rl.get(key) or (0, 0)
+    if now - win[0] >= 3600:
+        win = (now, 0)
+    if win[1] >= 30:
+        raise HTTPException(429, "去背请求过于频繁")
+    _up_rl[key] = (win[0], win[1] + 1)
     row = _file_row(fid)
     if row is None or row["kind"] != "image":
         raise HTTPException(400, "仅图片支持去背")
@@ -2649,7 +2696,8 @@ async def do_removebg(fid: str):
 
 
 @app.get("/api/plugins")
-async def plugins():
+async def plugins(request: Request):
+    require_req_device(request)
     items = []
     for f in sorted(PLUGIN_DIR.glob("*.json")):
         try:
