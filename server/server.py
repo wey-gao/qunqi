@@ -81,7 +81,7 @@ SECRET_EXEMPT = {"/api/apk", "/api/device", "/api/version", "/api/health", "/api
 async def diag_log(request: Request, call_next):
     resp = await call_next(request)
     try:
-        if os.getenv("DIAG_LOG", "1") == "1" and request.url.path in ("/api/me", "/api/restore", "/api/convs", "/api/messages"):
+        if os.getenv("DIAG_LOG", "0") == "1" and request.url.path in ("/api/me", "/api/restore", "/api/convs", "/api/messages"):
             dev = request.query_params.get("device", "")
             line = "%d %s dev=%s sec=%s -> %d\n" % (int(time.time()), request.url.path, dev,
                                                      "1" if request.headers.get("x-device-secret") else "0", resp.status_code)
@@ -1688,6 +1688,12 @@ async def bot_watchdog():
 @app.on_event("startup")
 async def startup():
     init_db()
+    try:
+        logp = DATA / "diag.log"
+        if logp.exists() and logp.stat().st_size > 1024 * 1024:
+            logp.unlink()
+    except Exception:
+        pass
     # 历史设备可能没有密钥，会让鉴权中间件放行；启动时补齐
     try:
         conn = db()
@@ -2869,6 +2875,7 @@ async def plugins(request: Request):
 @app.post("/api/plugins/{pid}/toggle")
 async def toggle_plugin(pid: str, request: Request):
     body = await request.json()
+    require_admin(body.get("conv") or "", body.get("device", ""))
     enable = bool(body.get("enable", True))
     set_setting("plugin_" + pid, enable)
     return {"ok": True, "plugin_id": pid, "enabled": enable}
@@ -2889,7 +2896,11 @@ async def ws_endpoint(ws: WebSocket):
         prof = device_profile(first.get("device", ""), first.get("name", ""),
                               first.get("kind", "user"))
         uid, nick = prof["uid"], prof["name"]
-        _sec, _exp = first.get("secret", ""), prof.get("secret", "")
+        _dev = first.get("device", "") or ""
+        _sec = first.get("secret", "") or ""
+        _exp = secret_of(_dev)
+        if not _exp and _dev in ("bot", "BOT", "ai", "AI", str(BOT_ID)):
+            _exp = BOT_TOKEN
         if _exp and _sec != _exp:
             await ws.send_text(json.dumps({"t": "error", "msg": "设备密钥不正确，请重新登录"}, ensure_ascii=False))
             await ws.close(code=4403)
