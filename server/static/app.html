@@ -2402,7 +2402,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.53', UP_URL = '';
+var APP_VER = '0.53.54', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2660,8 +2660,14 @@ function saveDraft(){
     if(v) LS.setItem('gw_draft_'+current, v); else LS.removeItem('gw_draft_'+current);
   }catch(e){}
 }
+function fitInput(){
+  var i=$('input'); if(!i) return;
+  i.style.height='auto';
+  i.style.height=Math.min(i.scrollHeight,120)+'px';
+}
+
 function loadDraft(){
-  try{ $('input').value=LS.getItem('gw_draft_'+current)||''; refreshSend(); }catch(e){}
+  try{ $('input').value=LS.getItem('gw_draft_'+current)||''; fitInput(); refreshSend(); }catch(e){}
 }
 
 function send(opts){
@@ -2674,7 +2680,7 @@ function send(opts){
       {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
       .then(function(r){ toast(r.ok ? '已保存' : '保存失败'); })
       .catch(function(){ toast('保存失败'); });
-    $('input').value=''; refreshSend();
+    $('input').value=''; fitInput(); refreshSend();
     return;
   }
   if(!text && !pending.length) return;
@@ -2685,7 +2691,7 @@ function send(opts){
     var qph=renderMsg({role:'user', sender:ME.uid, client_msg_id:qmid, content:{text:text, attachments:pending.slice()}});
     if(qph){ qph.classList.add('sending'); }
     LS.removeItem('gw_draft_'+current);
-    $('input').value=''; clearPending(); clearReply(); refreshSend();
+    $('input').value=''; fitInput(); clearPending(); clearReply(); refreshSend();
     toast('网络未就绪，已存入待发送队列');
     return;
   }
@@ -2721,7 +2727,7 @@ function send(opts){
     SENT[cmid]=ph;
   }
   clearPending(); clearReply();
-  $('input').value=''; $('input').style.height='auto';
+  $('input').value=''; fitInput();
   try{ LS.removeItem('gw_draft_'+current); }catch(e){}
   refreshSend();
 }
@@ -3958,7 +3964,7 @@ if(window.visualViewport){
 }
 $('input').addEventListener('input', function(){ try{ saveDraft(); }catch(e){} });
 $('input').addEventListener('input', function(){
-  var i=$('input'); i.style.height='auto'; i.style.height=Math.min(i.scrollHeight,120)+'px'; refreshSend();
+  fitInput(); refreshSend();
   var cp = i.selectionStart;
   if(cp>0 && i.value.charAt(cp-1)==='@' && String(current).charAt(0)==='g' && !$('sheetAt').classList.contains('show')){
     AT_POS = cp-1;
