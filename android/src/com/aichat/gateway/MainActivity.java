@@ -24,6 +24,13 @@ import android.os.Build;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import java.util.ArrayList;
+import android.animation.ValueAnimator;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.view.View;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
+import android.widget.ImageView;
 
 public class MainActivity extends Activity {
     /* 界面内置在 APK 里，启动不再等网络；接口仍连服务器 */
@@ -84,7 +91,8 @@ public class MainActivity extends Activity {
     private void init() {
         sp = getSharedPreferences("app", MODE_PRIVATE);
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.WHITE);
+        root.setBackgroundColor(Color.parseColor("#0F1218"));
+        try { getWindow().setBackgroundDrawable(new ColorDrawable(Color.parseColor("#0F1218"))); } catch (Exception ignored) {}
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -97,7 +105,7 @@ public class MainActivity extends Activity {
         s.setAllowFileAccess(true);
         s.setAllowFileAccessFromFileURLs(true);
         s.setAllowUniversalAccessFromFileURLs(true);
-        web.setBackgroundColor(Color.WHITE);
+        web.setBackgroundColor(Color.parseColor("#0F1218"));
         web.setDownloadListener((url, ua, cd, mime, len) -> {
             try {
                 // APK 交给系统下载器/浏览器，WebView 自己不处理二进制
@@ -209,6 +217,7 @@ public class MainActivity extends Activity {
         });
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
+        playSplash(root);
         pendingJoin = joinCodeFrom(getIntent());
         askPermissions();
         // 始终用固定 base 加载内置页：换过服务器地址也不再改变 localStorage 归属，
@@ -216,6 +225,95 @@ public class MainActivity extends Activity {
         loadLocalPage();
     }
 
+
+    /* 原生启动动画：图标淡入并轻放大 → 图标里的深色块铺满全屏 → 淡出进入聊天界面 */
+    private void playSplash(final FrameLayout root) {
+        try {
+            final int w = getResources().getDisplayMetrics().widthPixels;
+            final int h = getResources().getDisplayMetrics().heightPixels;
+            final float d = getResources().getDisplayMetrics().density;
+            final int iconSize = (int) (86 * d);
+            final int innerStart = (int) (64 * d);
+
+            final View plate = new View(this);
+            final GradientDrawable gd = new GradientDrawable();
+            gd.setColor(Color.parseColor("#0F1218"));
+            gd.setCornerRadius(24 * d);
+            plate.setBackground(gd);
+
+            final ImageView icon = new ImageView(this);
+            int resId = getResources().getIdentifier("ic_launcher", "mipmap", getPackageName());
+            if (resId == 0) resId = getResources().getIdentifier("ic_launcher", "drawable", getPackageName());
+            if (resId != 0) icon.setImageResource(resId);
+            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+
+            final FrameLayout.LayoutParams lpPlate = new FrameLayout.LayoutParams(innerStart, innerStart);
+            lpPlate.leftMargin = (w - innerStart) / 2;
+            lpPlate.topMargin = (h - innerStart) / 2;
+            final FrameLayout.LayoutParams lpIcon = new FrameLayout.LayoutParams(iconSize, iconSize);
+            lpIcon.leftMargin = (w - iconSize) / 2;
+            lpIcon.topMargin = (h - iconSize) / 2;
+
+            root.addView(plate, lpPlate);
+            root.addView(icon, lpIcon);
+
+            icon.setAlpha(0f);
+            icon.setScaleX(0.86f); icon.setScaleY(0.86f);
+            plate.setAlpha(0f);
+
+            ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
+            anim.setDuration(1150);
+            anim.setInterpolator(new AccelerateDecelerateInterpolator());
+            anim.addUpdateListener(va -> {
+                float f = va.getAnimatedFraction();
+                int iw = (int) (w - (w - innerStart) * Math.min(1f, Math.max(0f, (0.22f - f) / 0.22f + 1f)));
+                if (f <= 0.22f) {
+                    // 第一阶段：图标淡入 + 轻微放大，深色底刚好和图标内沿重合
+                    float p = f / 0.22f;
+                    icon.setAlpha(p);
+                    float sc = 0.86f + 0.14f * p;
+                    icon.setScaleX(sc); icon.setScaleY(sc);
+                    plate.setAlpha(0f);
+                } else if (f <= 0.68f) {
+                    // 第二阶段：深色块从图标大小铺满全屏，图标跟着放大并淡出
+                    float p = (f - 0.22f) / 0.46f;
+                    float ease = (float) (1 - Math.pow(1 - p, 2.2));
+                    int size = (int) (innerStart + (w - innerStart) * ease);
+                    int hei = (int) (innerStart + (h - innerStart) * ease);
+                    lpPlate.width = size; lpPlate.height = hei;
+                    lpPlate.leftMargin = (w - size) / 2;
+                    lpPlate.topMargin = (h - hei) / 2;
+                    plate.setLayoutParams(lpPlate);
+                    gd.setCornerRadius(Math.max(0, (24 * d) * (1 - ease)));
+                    plate.setAlpha(Math.min(1f, p * 4f));
+                    icon.setAlpha(1f - Math.min(1f, Math.max(0f, (p - 0.55f) / 0.45f)));
+                    float sc = 1f + 0.55f * ease;
+                    icon.setScaleX(sc); icon.setScaleY(sc);
+                } else if (f <= 0.80f) {
+                    // 第三阶段：全屏深色短暂停留
+                    lpPlate.width = w; lpPlate.height = h;
+                    lpPlate.leftMargin = 0; lpPlate.topMargin = 0;
+                    plate.setLayoutParams(lpPlate);
+                    gd.setCornerRadius(0);
+                    plate.setAlpha(1f); icon.setAlpha(0f);
+                } else {
+                    // 第四阶段：淡出，露出已经加载好的聊天界面
+                    float p = (f - 0.80f) / 0.20f;
+                    lpPlate.width = w; lpPlate.height = h;
+                    lpPlate.leftMargin = 0; lpPlate.topMargin = 0;
+                    plate.setLayoutParams(lpPlate);
+                    gd.setCornerRadius(0);
+                    plate.setAlpha(1f - p);
+                }
+            });
+            anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(android.animation.Animator a) {
+                    try { root.removeView(plate); root.removeView(icon); } catch (Exception ignored) {}
+                }
+            });
+            anim.start();
+        } catch (Exception ignored) {}
+    }
 
     /** 从 qunqi://join/<code> 里取邀请码 */
     private String joinCodeFrom(Intent it) {
