@@ -4063,7 +4063,8 @@ async def ws_endpoint(ws: WebSocket):
         clients.setdefault(conv, set()).add(ws)
         await ws.send_text(json.dumps({"t": "auth_ok", "bot": {"online": bot.online}, "conv": conv,
                                        "profile": {"uid": uid, "name": nick, "kind": prof.get("kind"),
-                                                   "code": prof.get("code"), "admin": is_admin(uid)},
+                                                   "code": prof.get("code"), "admin": is_admin(uid),
+                                                   "avatar": prof.get("avatar") or ""},
                                        "settings": ui_state(),
                                        "themes": THEMES + get_setting("custom_themes", []),
                                        "convs": conv_list(uid), "net": net_info(),
