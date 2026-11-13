@@ -21,7 +21,7 @@ html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;overflow:hidden}
 #bg{will-change:filter;position:fixed;inset:0;z-index:-2;background:var(--bg) center/cover no-repeat;transform:translate(var(--bgX,0),var(--bgY,0)) scale(var(--bgZoom,1.02)) rotate(var(--bgRot,0deg)) translateZ(0);transform-origin:center}
 #bgOverlay{position:fixed;inset:0;z-index:0;background:#05070a;opacity:.15;pointer-events:none}
-#app{display:flex;height:100vh;height:100dvh;position:relative}
+#app{display:flex;height:100vh;height:100dvh;height:var(--vvh,100dvh);position:relative}
 
 #side{width:252px;flex:0 0 252px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 .brand{display:flex;align-items:center;gap:9px;padding:16px 16px 10px}
@@ -57,7 +57,7 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 .hbtn:hover svg{stroke:var(--accent)}
 #menuBtn{display:none}
 
-#list{flex:1;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;overscroll-behavior-x:none;padding:14px 14px 150px;min-height:0;scroll-behavior:smooth}
+#list{flex:1;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;overscroll-behavior-x:none;padding:14px 14px 20px;min-height:0;scroll-behavior:smooth;-webkit-overflow-scrolling:touch}
 .day{text-align:center;color:var(--dim);font-size:11.5px;margin:8px 0 14px}
 .row{display:flex;gap:8px;margin-bottom:12px;align-items:flex-end}
 .row.user{flex-direction:row-reverse}
@@ -85,7 +85,7 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 .fops a,.fops button{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);color:var(--ink);text-decoration:none;background:transparent;cursor:pointer;line-height:1.4}
 .fops a:hover,.fops button:hover{border-color:var(--accent);color:var(--accent)}
 
-#composer{position:absolute;left:0;right:0;bottom:0;padding:9px 12px calc(9px + env(safe-area-inset-bottom));background:color-mix(in srgb,var(--panel) 82%,transparent);backdrop-filter:blur(14px);border-top:1px solid var(--line);z-index:4}
+#composer{position:relative;flex:none;left:auto;right:auto;bottom:auto;padding:9px 12px calc(9px + env(safe-area-inset-bottom));background:color-mix(in srgb,var(--panel) 92%,transparent);border-top:1px solid var(--line);z-index:4}
 #chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
 #chips:empty{display:none}
 .chip{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font-size:11.5px;max-width:100%}
@@ -724,9 +724,18 @@ body.hasbg #composer{background:color-mix(in srgb,var(--panel) 74%,transparent)!
 /* 背景图要能被看见：body 不铺不透明底色，交给 #bg 与 html */
 html,body{background:var(--bg)}
 body.hasbg{background:transparent!important}
+#boot{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;
+flex-direction:column;gap:16px;background:var(--bg,#f6f7f9);transition:opacity .3s ease}
+#boot.out{opacity:0;pointer-events:none}
+#bootLogo{width:74px;height:74px;border-radius:22px;display:flex;align-items:center;justify-content:center;
+background:var(--accent,#1fb6a0);color:#fff;font:700 32px/1 -apple-system,"PingFang SC",sans-serif;
+box-shadow:0 10px 30px rgba(0,0,0,.18);animation:bootPulse 1.15s ease-in-out infinite}
+@keyframes bootPulse{0%,100%{transform:scale(.94);opacity:.88}50%{transform:scale(1);opacity:1}}
+#bootTxt{font:13px/1.4 -apple-system,"PingFang SC",sans-serif;color:var(--dim,#8a93a0);letter-spacing:.5px}
 </style>
 </head>
 <body>
+<div id="boot"><div id="bootLogo">群</div><div id="bootTxt">正在载入…</div></div>
 <div id="bg"></div><div id="bgOverlay"></div>
 <div id="texLayer"></div>
 <div id="bgDrag"></div>
@@ -1334,6 +1343,16 @@ function saveLocalUI(patch){
   }catch(e){}
 }
 
+window.__bootT = Date.now();
+function hideBoot(){
+  var b = document.getElementById('boot');
+  if(!b || b.__done) return; b.__done = 1;
+  var wait = Math.max(0, 420 - (Date.now() - window.__bootT));
+  setTimeout(function(){
+    b.classList.add('out');
+    setTimeout(function(){ if(b.parentNode) b.parentNode.removeChild(b); }, 340);
+  }, wait);
+}
 var S = {theme:'light_clean', bg:{url:'',brightness:1,overlay:.15,blur:0}, avatar:{url:'',shape:'circle',size:44,removeBg:false,border:2,borderColor:'#3fb8a0'}, bubble:{radius:14, opacity:1}, font:{size:15}};
 var SYS = null;
 var THEMES = [], CONVS = [], current = '', ws = null, retry = 0;
@@ -2305,7 +2324,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.44', UP_URL = '';
+var APP_VER = '0.53.45', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2417,7 +2436,7 @@ function connect(){
       if(f.convs){ CONVS = f.convs; renderConvs(); }
       if(SYS && SYS.ai_hidden && current === 'u'+ME.uid && CONVS.length) current = CONVS[0].id;
       if(f.conv && f.conv!==current && (String(f.conv).charAt(0)==='g' || f.conv==='u'+ME.uid)){ current = f.conv; }
-      renderConvs(); applyState(); renderThemes(); loadHistory();
+      renderConvs(); applyState(); renderThemes(); loadHistory(); hideBoot();
       if(LS.getItem('gw_onboarded')!=='1'){ setTimeout(function(){
         if(!LS.getItem('gw_role') && !SAVED_SRV) return openRole();
         if(NEED_SRV) openSheet('sheetServer'); else openOnboard();
@@ -3824,23 +3843,20 @@ $('btnAt').onclick = function(){ openAtSheet(); };
 
 if(window.visualViewport){
   var vv=window.visualViewport;
-  var _kbNow = 0;
+  var _vhNow = 0;
   var fixKb=function(){
-    var kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-    if(Math.abs(kb - _kbNow) < 2 && kb > 0) return;
-    _kbNow = kb;
-    var c=$('composer');
-    if(c) c.style.bottom = kb>40 ? (kb+'px') : '0';
-    // 键盘顶起来时列表要跟着缩短，否则底部消息被输入栏挡住
+    // 直接拿 visualViewport 的真实高度当 app 高度：键盘弹起时它会缩，
+    // 列表在 flex 里自动变短，聊天记录不会再被输入栏盖住
+    var vh = Math.round(vv.height);
+    if(Math.abs(vh - _vhNow) < 2) return;
+    _vhNow = vh;
+    document.documentElement.style.setProperty('--vvh', vh + 'px');
     var list=$('list');
-    if(list){
-      list.style.paddingBottom = (150 + kb) + 'px';
-      if(kb>40){
-        try{ list.scrollTop = list.scrollHeight; }catch(e){}
-      }
+    if(list && $('input')===document.activeElement){
+      setTimeout(function(){ try{ list.scrollTop = list.scrollHeight; }catch(e){} }, 40);
     }
-    if(kb>40 && $('input')===document.activeElement){ setTimeout(function(){ try{ $('input').scrollIntoView({block:'nearest'}); }catch(e){} }, 60); }
   };
+  fixKb();
   vv.addEventListener('resize', fixKb); vv.addEventListener('scroll', fixKb);
   window.addEventListener('resize', fixKb);
 }
@@ -4366,6 +4382,7 @@ loadHistory();
 loadPlugins();
 </script>
 <script>
+setTimeout(hideBoot, 2800);
 if('serviceWorker' in navigator){ window.addEventListener('load', function(){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }); }
 </script>
 </body>
