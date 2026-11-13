@@ -4250,9 +4250,10 @@ async def ws_endpoint(ws: WebSocket):
                              + user_text)
 
             mentions = [int(x) for x in (payload.get("mentions") or [])]
-            at_me = (BOT_ID in mentions) or ("@" + BOT_NAME in text)
-            if is_group and (row["at_only"] or 0) and uid != BOT_ID and not at_me:
-                # 群开了“仅 @ 回复”，这条只存档广播，不叫 AI
+            # 群聊只在被点名时才叫 AI：@ 我（mentions 里带 BOT_ID）、文本里出现 "@名字"，
+            # 或者正文完整出现了我的名字，都算点名；否则只存档广播，不推给 AI
+            at_me = (BOT_ID in mentions) or ("@" + BOT_NAME in text) or (BOT_NAME in text)
+            if is_group and uid != BOT_ID and not at_me:
                 continue
             is_cmd = str(text or "").strip().startswith("/")
             if AGENT_MODE == "onebot":
