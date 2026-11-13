@@ -1386,9 +1386,13 @@ def add_message(conv: str, sender: str, role: str, msg_type: str, content: dict)
     return out
 
 
-def history(conv: str, limit: int = 60, after: int = 0) -> list:
+def history(conv: str, limit: int = 60, after: int = 0, before: int = 0) -> list:
     conn = db()
-    if after:
+    if before:
+        rows = conn.execute("SELECT * FROM message WHERE conv=? AND seq<? ORDER BY seq DESC LIMIT ?",
+                            (conv, before, limit)).fetchall()
+        rows = list(reversed(rows))
+    elif after:
         rows = conn.execute("SELECT * FROM message WHERE conv=? AND seq>? ORDER BY seq LIMIT ?",
                             (conv, after, limit)).fetchall()
         rows = list(rows)
@@ -3339,9 +3343,10 @@ async def api_merge_forward(request: Request):
 
 
 @app.get("/api/history")
-async def get_history(conv: str = "u1001", limit: int = 60, device: str = ""):
+async def get_history(conv: str = "u1001", limit: int = 60, before: int = 0, device: str = ""):
     require_member(conv, device)
-    return {"items": history(conv, min(limit, 200))}
+    items = history(conv, min(max(limit, 1), 200), 0, max(before, 0))
+    return {"items": items, "has_more": len(items) >= min(max(limit, 1), 200) or bool(before)}
 
 
 _TEXT_CACHE: dict = {}

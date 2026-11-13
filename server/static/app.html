@@ -1682,6 +1682,10 @@ function resetViewState(){
     setTimeout(function(){ if(bg) bg.style.transition=''; }, 60);
   }
 }
+$('list').addEventListener('scroll', function(){
+  if(this.scrollTop < 64) histLoadMore();
+}, {passive:true});
+
 function switchConv(id){
   try{ var old=current; if(old) saveDraftFor(old); }catch(e){}
   resetViewState();
@@ -2049,24 +2053,36 @@ function redrawCurrent(){
     l.scrollTop = l.scrollHeight;
   });
 }
-var HIST_MEM = {};   // 每个会话最近一次的消息数组，切回来时同步直出，不再等网络/IndexedDB
+var HIST_PAGE = 40;          // 每次只渲染 40 条，首屏快
+var HIST_MEM = {};           // 已加载的消息窗口（不是全量）
+var HIST_MORE = {};          // 是否还有更早的
+var HIST_LOADING = {};       // 防止重复触发上翻加载
 
-function histPaint(items){
+function histPaint(items, more){
   var l=$('list');
   var sb=l.style.scrollBehavior; l.style.scrollBehavior='auto';
   $('list').innerHTML='';
   LAST_TS=0; LAST_SENDER=null; LAST_SEP=0;
+  if(more!==false){
+    var hint=document.createElement('div');
+    hint.className='day'; hint.id='topMore'; hint.style.opacity='.55';
+    hint.textContent='向上滑动加载更早的消息';
+    l.appendChild(hint);
+  }
   items.forEach(function(m){ renderMsg(m); });
-  l.scrollTop = l.scrollHeight;
   l.style.scrollBehavior = sb || '';
+}
+
+function histScrollBottom(){
+  var l=$('list'); l.scrollTop = l.scrollHeight;
 }
 
 async function loadHistory(){
   var want = current;
   var mem = HIST_MEM[want];
   if(mem && mem.length){
-    // 命中内存缓存：这一帧就把消息铺出来，随后只做后台增量
-    histPaint(mem);
+    histPaint(mem, HIST_MORE[want]);
+    histScrollBottom();
     histSync(want, mem[mem.length-1].seq);
     return;
   }
@@ -2075,26 +2091,60 @@ async function loadHistory(){
   var cached = [];
   try{ cached = await idbLoad(want); }catch(e){}
   if(want!==current) return;
+  if(cached.length > HIST_PAGE){ cached = cached.slice(-HIST_PAGE); }
   if(!cached.length){
     try{
-      var r = await fetch('/api/history?conv='+encodeURIComponent(want)+'&device='+encodeURIComponent(DEV));
+      var r = await fetch('/api/history?conv='+encodeURIComponent(want)+'&limit='+HIST_PAGE+'&device='+encodeURIComponent(DEV));
       if(want!==current) return;
       if(!r.ok){
         if(String(want).charAt(0)==='u' && want!=='u'+ME.uid){ switchConv('u'+ME.uid); return; }
         $('list').innerHTML='<div class="day">会话不可用，返回自己的私聊</div>';
         return;
       }
-      cached = ((await r.json()).items)||[];
+      var jd = await r.json();
+      cached = jd.items||[];
+      HIST_MORE[want] = cached.length >= HIST_PAGE;
       idbSave(cached);
     }catch(e){
       $('list').innerHTML='<div class="day">加载失败，检查网络后重试</div>';
       return;
     }
+  } else {
+    HIST_MORE[want] = true;
   }
   if(want!==current) return;
   HIST_MEM[want] = cached.slice();
-  histPaint(HIST_MEM[want]);
+  histPaint(HIST_MEM[want], HIST_MORE[want]);
+  histScrollBottom();
   histSync(want, cached.length ? cached[cached.length-1].seq : 0);
+}
+
+// 上翻加载更早的一页，保持当前位置不跳
+async function histLoadMore(){
+  var conv = current;
+  var mem = HIST_MEM[conv];
+  if(!mem || !mem.length) return;
+  if(HIST_LOADING[conv] || HIST_MORE[conv] === false) return;
+  HIST_LOADING[conv] = true;
+  var top = document.getElementById('topMore');
+  if(top) top.textContent = '正在加载…';
+  var beforeSeq = mem[0].seq;
+  try{
+    var r = await fetch('/api/history?conv='+encodeURIComponent(conv)+'&before='+beforeSeq+'&limit='+HIST_PAGE+'&device='+encodeURIComponent(DEV));
+    if(conv!==current) return;
+    if(!r.ok){ HIST_MORE[conv]=false; return; }
+    var jd = await r.json();
+    var items = jd.items||[];
+    if(!items.length){ HIST_MORE[conv]=false; if(top) top.textContent='没有更早的消息了'; return; }
+    var l = $('list');
+    var h0 = l.scrollHeight, t0 = l.scrollTop;
+    HIST_MEM[conv] = items.concat(mem);
+    histPaint(HIST_MEM[conv], items.length >= HIST_PAGE);
+    l.scrollTop = l.scrollHeight - h0 + t0;
+    idbSave(items);
+  }catch(e){} finally{
+    HIST_LOADING[conv] = false;
+  }
 }
 
 // 后台补拉增量，只 append，不重绘整屏
@@ -2352,7 +2402,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.47', UP_URL = '';
+var APP_VER = '0.53.48', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
