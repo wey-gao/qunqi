@@ -3182,6 +3182,7 @@ def require_member(conv: str, device: str):
             raise HTTPException(403, "无权访问该会话")
     else:
         raise HTTPException(403, "会话标识不正确")
+    return int(uid)
 
 
 @app.get("/api/messages")
@@ -3910,6 +3911,17 @@ async def export_conv(conv: str = "", device: str = "", limit: int = 5000):
                     headers={"Content-Disposition": "attachment; filename=qunqi-%s.json" % conv})
 
 
+def sender_uid(v) -> int:
+    """message.sender 有的存数字 uid，有的存 'bot'/'ai' 这类别名，统一折算成 uid。"""
+    try:
+        return int(v or 0)
+    except Exception:
+        s = str(v or "").strip().lower()
+        if s in ("bot", "ai", "agent"):
+            return int(BOT_ID)
+        return 0
+
+
 def _age_seconds(ts) -> int:
     """消息 ts 有的按毫秒存、有的按秒存，统一换算成“距今多少秒”。"""
     try:
@@ -3929,7 +3941,7 @@ async def recall_message(cid: str, seq: int, request: Request, device: str = "")
     row = conn.execute("SELECT * FROM message WHERE conv=? AND seq=?", (cid, seq)).fetchone()
     if row is None:
         conn.close(); raise HTTPException(404, "消息不存在")
-    if int(row["sender"] or 0) != int(uid) and not is_admin(uid):
+    if sender_uid(row["sender"]) != int(uid) and not is_admin(uid):
         conn.close(); raise HTTPException(403, "只能撤回自己的消息")
     if not is_admin(uid) and _age_seconds(row["ts"]) > 120:
         conn.close(); raise HTTPException(400, "超过 2 分钟不能撤回")
@@ -3956,7 +3968,7 @@ async def edit_message(cid: str, seq: int, request: Request, device: str = ""):
     row = conn.execute("SELECT * FROM message WHERE conv=? AND seq=?", (cid, seq)).fetchone()
     if row is None:
         conn.close(); raise HTTPException(404, "消息不存在")
-    if int(row["sender"] or 0) != int(uid):
+    if sender_uid(row["sender"]) != int(uid):
         conn.close(); raise HTTPException(403, "只能编辑自己的消息")
     if _age_seconds(row["ts"]) > 300:
         conn.close(); raise HTTPException(400, "超过 5 分钟不能编辑")
