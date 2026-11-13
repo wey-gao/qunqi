@@ -2402,7 +2402,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.48', UP_URL = '';
+var APP_VER = '0.53.49', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2556,12 +2556,29 @@ function connect(){
       Array.prototype.forEach.call($('list').children, function(el){
         if(el.dataset && String(el.dataset.seq)===String(f.seq)) el.remove();
       });
+    } else if(f.t==='msg_ack'){
+      try{
+        var ph0 = SENT[f.client_msg_id];
+        if(ph0){
+          clearTimeout(ph0.dataset.timer);
+          ph0.classList.remove('sending');
+          delete SENT[f.client_msg_id];
+        }
+      }catch(e){}
+    } else if(f.t==='error'){
+      toast(f.msg || '操作失败');
+      try{
+        Object.keys(SENT).forEach(function(k){ var ph1=SENT[k]; if(ph1){ clearTimeout(ph1.dataset.timer); ph1.classList.remove('sending'); ph1.classList.add('failed'); delete SENT[k]; } });
+      }catch(e){}
     } else if(f.t==='msg_push'){
       idbSave([f]);
       var cv = CONVS.filter(function(x){ return x.id===f.conv; })[0];
       if(cv && f.seq){ cv.last_seq = Math.max(cv.last_seq||0, f.seq); }
       var c = f.content || {};
       var hitMe = (c.mentions||[]).indexOf(-1) >= 0 || (c.mentions||[]).indexOf(ME.uid) >= 0 || (c.text && ME.name && c.text.indexOf('@'+ME.name)>=0);
+      if(f.client_msg_id && SENT[f.client_msg_id]){
+        try{ clearTimeout(SENT[f.client_msg_id].dataset.timer); SENT[f.client_msg_id].classList.remove('sending'); delete SENT[f.client_msg_id]; }catch(e){}
+      }
       if(f.conv!==current){
         if(hitMe){ MENTION[f.conv]=(MENTION[f.conv]||0)+1; LS.setItem('gw_mention', JSON.stringify(MENTION)); }
         renderConvs(); return;
@@ -2686,7 +2703,7 @@ function send(opts){
   if(REPLY) payload.reply_to = REPLY.seq;
   if(mentions.length) payload.mentions = mentions;
   if(opts.voice){ payload.voice = true; payload.dur = opts.dur; }
-  ws.send(JSON.stringify({t:'msg_send', type:(opts.voice?'voice':'text'), client_msg_id:cmid, content:payload}));
+  ws.send(JSON.stringify({t:'msg_send', conv:current, type:(opts.voice?'voice':'text'), client_msg_id:cmid, content:payload}));
   var local = {text:text, attachments:pending.slice()};
   if(REPLY) local.quote = {name:REPLY.name, text:REPLY.text};
   var ph = renderMsg({role:'user', sender:ME.uid, client_msg_id:cmid, content:local});
