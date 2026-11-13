@@ -30,7 +30,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
-import android.widget.ImageView;
 
 public class MainActivity extends Activity {
     /* 界面内置在 APK 里，启动不再等网络；接口仍连服务器 */
@@ -226,89 +225,65 @@ public class MainActivity extends Activity {
     }
 
 
-    /* 原生启动动画：图标淡入并轻放大 → 图标里的深色块铺满全屏 → 淡出进入聊天界面 */
+    /* 原生启动动画：深色块从中心小圆角淡入并铺满全屏，再淡出进入聊天界面（不再显示图标） */
     private void playSplash(final FrameLayout root) {
         try {
             final int w = getResources().getDisplayMetrics().widthPixels;
             final int h = getResources().getDisplayMetrics().heightPixels;
             final float d = getResources().getDisplayMetrics().density;
-            final int iconSize = (int) (86 * d);
-            final int innerStart = (int) (64 * d);
+            final int start = (int) (96 * d);
 
             final View plate = new View(this);
             final GradientDrawable gd = new GradientDrawable();
             gd.setColor(Color.parseColor("#0F1218"));
-            gd.setCornerRadius(24 * d);
+            gd.setCornerRadius(26 * d);
             plate.setBackground(gd);
 
-            final ImageView icon = new ImageView(this);
-            int resId = getResources().getIdentifier("ic_launcher", "mipmap", getPackageName());
-            if (resId == 0) resId = getResources().getIdentifier("ic_launcher", "drawable", getPackageName());
-            if (resId != 0) icon.setImageResource(resId);
-            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-
-            final FrameLayout.LayoutParams lpPlate = new FrameLayout.LayoutParams(innerStart, innerStart);
-            lpPlate.leftMargin = (w - innerStart) / 2;
-            lpPlate.topMargin = (h - innerStart) / 2;
-            final FrameLayout.LayoutParams lpIcon = new FrameLayout.LayoutParams(iconSize, iconSize);
-            lpIcon.leftMargin = (w - iconSize) / 2;
-            lpIcon.topMargin = (h - iconSize) / 2;
-
-            root.addView(plate, lpPlate);
-            root.addView(icon, lpIcon);
-
-            icon.setAlpha(0f);
-            icon.setScaleX(0.86f); icon.setScaleY(0.86f);
+            final FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(start, start);
+            lp.leftMargin = (w - start) / 2;
+            lp.topMargin = (h - start) / 2;
+            root.addView(plate, lp);
             plate.setAlpha(0f);
 
             ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
-            anim.setDuration(1150);
+            anim.setDuration(980);
             anim.setInterpolator(new AccelerateDecelerateInterpolator());
             anim.addUpdateListener(va -> {
                 float f = va.getAnimatedFraction();
-                int iw = (int) (w - (w - innerStart) * Math.min(1f, Math.max(0f, (0.22f - f) / 0.22f + 1f)));
-                if (f <= 0.22f) {
-                    // 第一阶段：图标淡入 + 轻微放大，深色底刚好和图标内沿重合
-                    float p = f / 0.22f;
-                    icon.setAlpha(p);
-                    float sc = 0.86f + 0.14f * p;
-                    icon.setScaleX(sc); icon.setScaleY(sc);
-                    plate.setAlpha(0f);
-                } else if (f <= 0.68f) {
-                    // 第二阶段：深色块从图标大小铺满全屏，图标跟着放大并淡出
-                    float p = (f - 0.22f) / 0.46f;
-                    float ease = (float) (1 - Math.pow(1 - p, 2.2));
-                    int size = (int) (innerStart + (w - innerStart) * ease);
-                    int hei = (int) (innerStart + (h - innerStart) * ease);
-                    lpPlate.width = size; lpPlate.height = hei;
-                    lpPlate.leftMargin = (w - size) / 2;
-                    lpPlate.topMargin = (h - hei) / 2;
-                    plate.setLayoutParams(lpPlate);
-                    gd.setCornerRadius(Math.max(0, (24 * d) * (1 - ease)));
-                    plate.setAlpha(Math.min(1f, p * 4f));
-                    icon.setAlpha(1f - Math.min(1f, Math.max(0f, (p - 0.55f) / 0.45f)));
-                    float sc = 1f + 0.55f * ease;
-                    icon.setScaleX(sc); icon.setScaleY(sc);
-                } else if (f <= 0.80f) {
-                    // 第三阶段：全屏深色短暂停留
-                    lpPlate.width = w; lpPlate.height = h;
-                    lpPlate.leftMargin = 0; lpPlate.topMargin = 0;
-                    plate.setLayoutParams(lpPlate);
+                if (f <= 0.24f) {
+                    // 阶段一：小圆角块淡入
+                    float p = f / 0.24f;
+                    plate.setAlpha(p * 0.95f);
+                } else if (f <= 0.66f) {
+                    // 阶段二：铺满全屏，圆角收到 0
+                    float p = (f - 0.24f) / 0.42f;
+                    float ease = (float) (1 - Math.pow(1 - p, 2.4));
+                    int size = (int) (start + (w - start) * ease);
+                    int hei = (int) (start + (h - start) * ease);
+                    lp.width = size; lp.height = hei;
+                    lp.leftMargin = (w - size) / 2;
+                    lp.topMargin = (h - hei) / 2;
+                    plate.setLayoutParams(lp);
+                    gd.setCornerRadius(Math.max(0f, (26 * d) * (1 - ease)));
+                    plate.setAlpha(1f);
+                } else if (f <= 0.78f) {
+                    // 阶段三：全屏停留
+                    lp.width = w; lp.height = h; lp.leftMargin = 0; lp.topMargin = 0;
+                    plate.setLayoutParams(lp);
                     gd.setCornerRadius(0);
-                    plate.setAlpha(1f); icon.setAlpha(0f);
+                    plate.setAlpha(1f);
                 } else {
-                    // 第四阶段：淡出，露出已经加载好的聊天界面
-                    float p = (f - 0.80f) / 0.20f;
-                    lpPlate.width = w; lpPlate.height = h;
-                    lpPlate.leftMargin = 0; lpPlate.topMargin = 0;
-                    plate.setLayoutParams(lpPlate);
+                    // 阶段四：淡出
+                    float p = (f - 0.78f) / 0.22f;
+                    lp.width = w; lp.height = h; lp.leftMargin = 0; lp.topMargin = 0;
+                    plate.setLayoutParams(lp);
                     gd.setCornerRadius(0);
                     plate.setAlpha(1f - p);
                 }
             });
             anim.addListener(new android.animation.AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(android.animation.Animator a) {
-                    try { root.removeView(plate); root.removeView(icon); } catch (Exception ignored) {}
+                    try { root.removeView(plate); } catch (Exception ignored) {}
                 }
             });
             anim.start();

@@ -44,7 +44,7 @@ body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,Blin
 .sidefoot button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
 
 #main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
-header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--panel) 72%,transparent);backdrop-filter:blur(14px);z-index:3}
+header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--panel) 96%,transparent);z-index:3}
 #hAvatar{flex:0 0 auto;overflow:hidden;display:grid;place-items:center;background:transparent}
 #hAvatar img{width:100%;height:100%;display:block}
 .htitle{flex:1;min-width:0}
@@ -105,10 +105,10 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 .quick button{flex:0 0 auto;font-size:11.5px;padding:5px 9px;border-radius:14px;border:1px dashed color-mix(in srgb,var(--accent) 40%,var(--line));background:transparent;color:var(--dim);cursor:pointer;white-space:nowrap}
 .quick button:hover{color:var(--accent)}
 
-#mask{position:fixed;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:.2s;z-index:20}
+#mask{position:fixed;inset:0;background:rgba(0,0,0,.42);opacity:0;pointer-events:none;transition:opacity .16s linear;z-index:20}
 #mask.show{opacity:1;pointer-events:auto}
-.sheet{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);background:var(--panel);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.8,.2,1);z-index:24;display:flex;flex-direction:column;overscroll-behavior:contain}
-.sheet.show{transform:none}
+.sheet{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);background:var(--panel);border-left:1px solid var(--line);transform:translate3d(100%,0,0);transition:transform .22s cubic-bezier(.2,.8,.2,1);z-index:24;display:flex;flex-direction:column;overscroll-behavior:contain;backface-visibility:hidden}
+.sheet.show{transform:translateZ(0)}
 .sheet header{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;background:transparent}
 .sheet header b{flex:1;font-size:14.5px}
 .sheet .body{flex:1;overflow-y:auto;padding:14px 16px 24px}
@@ -379,7 +379,7 @@ html,body{overflow-x:hidden;overscroll-behavior-x:none;max-width:100vw}
 
 
 .sheet{box-shadow:none!important}
-.sheet.show{box-shadow:0 -24px 70px rgba(16,24,40,.18)!important}
+.sheet.show{box-shadow:-8px 0 24px rgba(16,24,40,.10)!important}
 
 
 /* ===== 微信式聊天增强 v1.0 ===== */
@@ -552,9 +552,9 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 
 /* ===== 主题风格层（18+ 套主题的差异化渲染） ===== */
 #texLayer{position:fixed;inset:0;z-index:0;pointer-events:none;background-repeat:repeat;opacity:.55;mix-blend-mode:normal}
-body.tstyle-glass #side,body.tstyle-glass .sheet{background:color-mix(in srgb,var(--panel) 90%,transparent)!important;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-body.tstyle-glass #composer{background:color-mix(in srgb,var(--panel) 78%,transparent)!important;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-body.tstyle-glass .bub{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+body.tstyle-glass #side,body.tstyle-glass .sheet{background:color-mix(in srgb,var(--panel) 94%,transparent)!important}
+body.tstyle-glass #composer{background:color-mix(in srgb,var(--panel) 90%,transparent)!important}
+body.tstyle-glass .bub{}
 body.tstyle-paper #side,body.tstyle-paper .sheet{background-image:repeating-linear-gradient(0deg,rgba(90,60,20,.027) 0 1px,transparent 1px 4px),radial-gradient(circle at 22% 18%,rgba(160,120,60,.035),transparent 60%)!important;background-size:auto,220px 220px}
 body.tstyle-paper .bub{box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 2px 6px rgba(90,70,40,.10)!important;border-radius:6px!important}
 body.tstyle-neon #side{border-right:1px solid color-mix(in srgb,var(--accent) 42%,transparent);box-shadow:inset -12px 0 30px -20px color-mix(in srgb,var(--accent) 60%,transparent)}
@@ -727,15 +727,14 @@ body.hasbg{background:transparent!important}
 #boot{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;
 flex-direction:column;gap:16px;background:var(--bg,#f6f7f9);transition:opacity .3s ease}
 #boot.out{opacity:0;pointer-events:none}
-#bootLogo{width:74px;height:74px;border-radius:22px;display:flex;align-items:center;justify-content:center;
-background:var(--accent,#1fb6a0);color:#fff;font:700 32px/1 -apple-system,"PingFang SC",sans-serif;
-box-shadow:0 10px 30px rgba(0,0,0,.18);animation:bootPulse 1.15s ease-in-out infinite}
+#bootLogo{width:56px;height:56px;border-radius:18px;background:var(--ink,#12161d);
+opacity:.92;animation:bootPulse 1.15s ease-in-out infinite}
 @keyframes bootPulse{0%,100%{transform:scale(.94);opacity:.88}50%{transform:scale(1);opacity:1}}
 #bootTxt{font:13px/1.4 -apple-system,"PingFang SC",sans-serif;color:var(--dim,#8a93a0);letter-spacing:.5px}
 </style>
 </head>
 <body>
-<div id="boot"><div id="bootLogo">群</div><div id="bootTxt">正在载入…</div></div>
+<div id="boot"><div id="bootLogo"></div><div id="bootTxt">正在载入…</div></div>
 <div id="bg"></div><div id="bgOverlay"></div>
 <div id="texLayer"></div>
 <div id="bgDrag"></div>
@@ -1694,8 +1693,6 @@ function switchConv(id){
   if(ws) ws.send(JSON.stringify({t:'switch', conv:id}));
   var cur0=null; CONVS.forEach(function(c){ if(c.id===id) cur0=c; });
   markRead(id, cur0 && cur0.last_seq);
-  $('list').innerHTML = '<div class="day">加载中…</div>';
-  LAST_TS=0; LAST_SENDER=null; LAST_SEP=0;
   renderConvs();
   applyState();   // 顶部头像按会话类型刷新：群聊只认群图片，私聊才用 AI 头像
   loadHistory();
@@ -2052,16 +2049,38 @@ function redrawCurrent(){
     l.scrollTop = l.scrollHeight;
   });
 }
-async function loadHistory(){
-  var cached = [];
-  try{ cached = await idbLoad(current); }catch(e){}
-  $('list').innerHTML = '';
+var HIST_MEM = {};   // 每个会话最近一次的消息数组，切回来时同步直出，不再等网络/IndexedDB
+
+function histPaint(items){
+  var l=$('list');
+  var sb=l.style.scrollBehavior; l.style.scrollBehavior='auto';
+  $('list').innerHTML='';
   LAST_TS=0; LAST_SENDER=null; LAST_SEP=0;
+  items.forEach(function(m){ renderMsg(m); });
+  l.scrollTop = l.scrollHeight;
+  l.style.scrollBehavior = sb || '';
+}
+
+async function loadHistory(){
+  var want = current;
+  var mem = HIST_MEM[want];
+  if(mem && mem.length){
+    // 命中内存缓存：这一帧就把消息铺出来，随后只做后台增量
+    histPaint(mem);
+    histSync(want, mem[mem.length-1].seq);
+    return;
+  }
+  $('list').innerHTML = '<div class="day" style="opacity:.7">加载中…</div>';
+  LAST_TS=0; LAST_SENDER=null; LAST_SEP=0;
+  var cached = [];
+  try{ cached = await idbLoad(want); }catch(e){}
+  if(want!==current) return;
   if(!cached.length){
     try{
-      var r = await fetch('/api/history?conv='+encodeURIComponent(current)+'&device='+encodeURIComponent(DEV));
+      var r = await fetch('/api/history?conv='+encodeURIComponent(want)+'&device='+encodeURIComponent(DEV));
+      if(want!==current) return;
       if(!r.ok){
-        if(String(current).charAt(0)==='u' && current!=='u'+ME.uid){ switchConv('u'+ME.uid); return; }
+        if(String(want).charAt(0)==='u' && want!=='u'+ME.uid){ switchConv('u'+ME.uid); return; }
         $('list').innerHTML='<div class="day">会话不可用，返回自己的私聊</div>';
         return;
       }
@@ -2072,19 +2091,28 @@ async function loadHistory(){
       return;
     }
   }
-  var l=$('list'); var sb=l.style.scrollBehavior; l.style.scrollBehavior='auto';
-  cached.forEach(function(m){ renderMsg(m); });
-  l.scrollTop = l.scrollHeight;
-  l.style.scrollBehavior = sb || '';
-  var last = cached.length ? cached[cached.length-1].seq : 0;
+  if(want!==current) return;
+  HIST_MEM[want] = cached.slice();
+  histPaint(HIST_MEM[want]);
+  histSync(want, cached.length ? cached[cached.length-1].seq : 0);
+}
+
+// 后台补拉增量，只 append，不重绘整屏
+async function histSync(conv, lastSeq){
   try{
-    var rr = await fetch('/api/messages?conv='+encodeURIComponent(current)+'&after='+last+'&device='+encodeURIComponent(DEV));
-    if(!rr.ok){ return; }
+    var rr = await fetch('/api/messages?conv='+encodeURIComponent(conv)+'&after='+lastSeq+'&device='+encodeURIComponent(DEV));
+    if(!rr.ok) return;
     var d = await rr.json();
-    var have = {}; cached.forEach(function(m){ have[m.seq]=1; });
-    (d.items||[]).forEach(function(m){ if(!have[m.seq]){ renderMsg(m); } });
-    idbSave(d.items||[]);
-    if(d.last_seq) markRead(current, d.last_seq);
+    var items = d.items||[];
+    if(conv===current){
+      var have = {}; (HIST_MEM[conv]||[]).forEach(function(m){ have[m.seq]=1; });
+      var sb=$('list').style.scrollBehavior; $('list').style.scrollBehavior='auto';
+      items.forEach(function(m){ if(!have[m.seq]){ renderMsg(m); (HIST_MEM[conv]=HIST_MEM[conv]||[]).push(m); } });
+      $('list').scrollTop = $('list').scrollHeight;
+      $('list').style.scrollBehavior = sb || '';
+    }
+    idbSave(items);
+    if(d.last_seq) markRead(conv, d.last_seq);
   }catch(e){}
 }
 
@@ -2324,7 +2352,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.46', UP_URL = '';
+var APP_VER = '0.53.47', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2497,6 +2525,7 @@ function connect(){
         if(dup){ dup.remove(); }
       }
       renderMsg(f);
+      try{ if(f.conv===current && HIST_MEM[f.conv]){ HIST_MEM[f.conv].push(f); } }catch(e){}
       markRead(f.conv, f.seq);
     } else if(f.t==='typing'){
       if(f.conv===current && String(f.uid)!==String(ME.uid)) { setState(true, f.name+' 正在输入…'); clearTimeout(window._ty); window._ty=setTimeout(function(){ setState(true,'在线'); },3500); }
