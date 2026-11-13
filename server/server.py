@@ -57,6 +57,19 @@ BOT_ID = int(os.getenv("BOT_ID", "2001"))
 ADMIN_UIDS = {int(x) for x in os.getenv("ADMIN_UIDS", "").replace(" ", "").split(",") if x.isdigit()}
 ADMIN_CODES = {x.strip().upper() for x in os.getenv("ADMIN_CODES", "").split(",") if x.strip()}
 BOT_NAME = os.getenv("BOT_NAME", "AI 助手")
+
+
+def bot_name_now() -> str:
+    """AI 对外显示的名字以 device 表为准（客户端看到的就是这个），env 只是兜底。"""
+    try:
+        conn = db()
+        row = conn.execute("SELECT name FROM device WHERE device_id='bot'").fetchone()
+        conn.close()
+        if row and (row["name"] or "").strip():
+            return row["name"].strip()
+    except Exception:
+        pass
+    return BOT_NAME
 OPENAI_BASE = os.getenv("OPENAI_BASE", "")
 OPENAI_KEY = os.getenv("OPENAI_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -4252,7 +4265,8 @@ async def ws_endpoint(ws: WebSocket):
             mentions = [int(x) for x in (payload.get("mentions") or [])]
             # 群聊只在被点名时才叫 AI：@ 我（mentions 里带 BOT_ID）、文本里出现 "@名字"，
             # 或者正文完整出现了我的名字，都算点名；否则只存档广播，不推给 AI
-            at_me = (BOT_ID in mentions) or ("@" + BOT_NAME in text) or (BOT_NAME in text)
+            bn = bot_name_now()
+            at_me = (BOT_ID in mentions) or ("@" + bn in text) or (bn in text)
             if is_group and uid != BOT_ID and not at_me:
                 continue
             is_cmd = str(text or "").strip().startswith("/")
@@ -4261,6 +4275,7 @@ async def ws_endpoint(ws: WebSocket):
                     # 指令必须原样送出，套了前缀就以【开头，AstrBot 的 / 前缀匹配不上
                     user_text = str(text).strip()
                 segments.insert(0, {"type": "text", "data": {"text": user_text}})
+                print(f"[gw] 推给 AI conv={conv} group={is_group} at={at_me} text={str(text)[:40]}", flush=True)
                 await bot.push(conv, uid, nick, segments, saved["seq"], is_group)
             else:
                 reply = await bot.direct_reply(conv, user_text,
