@@ -253,7 +253,7 @@ header{border-bottom:0;box-shadow:0 1px 0 color-mix(in srgb,var(--line) 75%,tran
 .sidefoot{padding:10px 12px calc(12px + env(safe-area-inset-bottom));background:transparent;border-top:1px solid color-mix(in srgb,var(--line) 85%,transparent)}
 .sfGrid button{background:var(--panel);border:1px solid color-mix(in srgb,var(--line) 90%,transparent);padding:11px 8px;font-size:12.5px;font-weight:500}
 
-header{padding:10px 16px;min-height:62px;gap:11px;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:saturate(1.4) blur(18px)}
+header{padding:10px 16px;min-height:62px;gap:11px;background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:none}
 .htitle b{font-size:16px;font-weight:650;letter-spacing:.2px}
 .htitle .hsub{font-size:11.5px;opacity:.9;margin-top:3px}
 .hbtn{width:36px;height:36px;border-radius:11px;border:0;background:transparent}
@@ -552,8 +552,8 @@ body.dark .row.bot .bub{background-color:color-mix(in srgb, var(--panel) calc(va
 
 /* ===== 主题风格层（18+ 套主题的差异化渲染） ===== */
 #texLayer{position:fixed;inset:0;z-index:0;pointer-events:none;background-repeat:repeat;opacity:.55;mix-blend-mode:normal}
-body.tstyle-glass #side,body.tstyle-glass .sheet{background:color-mix(in srgb,var(--panel) 76%,transparent)!important;backdrop-filter:blur(22px) saturate(1.2);-webkit-backdrop-filter:blur(22px) saturate(1.2)}
-body.tstyle-glass #composer{background:color-mix(in srgb,var(--panel) 62%,transparent)!important;backdrop-filter:blur(20px) saturate(1.2);-webkit-backdrop-filter:blur(20px) saturate(1.2)}
+body.tstyle-glass #side,body.tstyle-glass .sheet{background:color-mix(in srgb,var(--panel) 90%,transparent)!important;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+body.tstyle-glass #composer{background:color-mix(in srgb,var(--panel) 78%,transparent)!important;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 body.tstyle-glass .bub{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 body.tstyle-paper #side,body.tstyle-paper .sheet{background-image:repeating-linear-gradient(0deg,rgba(90,60,20,.027) 0 1px,transparent 1px 4px),radial-gradient(circle at 22% 18%,rgba(160,120,60,.035),transparent 60%)!important;background-size:auto,220px 220px}
 body.tstyle-paper .bub{box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 2px 6px rgba(90,70,40,.10)!important;border-radius:6px!important}
@@ -694,6 +694,8 @@ body.tstyle-glass .day::before,body.tstyle-glass .day::after{display:none}
 /* 左栏拉出时，聊天区背景虚化 */
 body.sideopen #mask{background:rgba(10,14,20,.16);backdrop-filter:none}
 body.sideopen #main{filter:blur(2.5px) saturate(.9) brightness(.97);transition:filter .18s ease}
+body.sliding .sheet,body.sliding #side{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important}
+body.sliding #main{transition:none}
 /* 水墨印章不再压在正文右侧：改成无字圆印，且只占角落 */
 body.tdeco-seal .sheet::after{content:"";right:14px;bottom:14px;width:38px;height:38px;border-radius:50%;
   background:radial-gradient(circle at 34% 32%, color-mix(in srgb,var(--accent) 42%,transparent),
@@ -2303,7 +2305,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.43', UP_URL = '';
+var APP_VER = '0.53.44', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2938,10 +2940,26 @@ function renderThemes(){
     if($('ctSub')) $('ctSub').textContent = customs.length ? (' · 本机保存 '+customs.length+' 个') : ' · 本机保存';
   }
   Array.prototype.forEach.call($('themeGrid').querySelectorAll('[data-theme]'), function(el){
-    el.onclick = function(){
+    var sx=0, sy=0, moved=false, typing=false;
+    el.addEventListener('pointerdown', function(ev){
+      sx=ev.clientX; sy=ev.clientY; moved=false;
+      // 记录按下瞬间焦点是否在输入框：点非可聚焦元素会让输入框先失焦，
+      // 到 pointerup 时已经看不出“正在打字”，所以必须在按下时抓一次
+      var ae=document.activeElement;
+      typing = !!(ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName));
+    }, {passive:true});
+    el.addEventListener('pointermove', function(ev){
+      if(Math.abs(ev.clientX-sx)>10 || Math.abs(ev.clientY-sy)>10) moved=true;
+    }, {passive:true});
+    el.addEventListener('pointerup', function(ev){
+      // 防误触：正在打字（焦点在输入框里）、滑动手势、面板没真正打开时，都不切主题
+      if(moved || typing) return;
+      var sh=$('sheetTheme');
+      if(sh && !sh.classList.contains('show')) return;
+      if((ev.detail||1) > 1) return;
       try{ localStorage.removeItem('gw_theme'); }catch(e){}
       S.theme = el.dataset.theme; applyState(); markThemeSel(); saveSettings({theme: el.dataset.theme});
-    };
+    });
   });
   Array.prototype.forEach.call($('customThemeList').querySelectorAll('.ctrow'), function(el){
     var tid = el.dataset.theme;
@@ -3097,7 +3115,7 @@ if($('btnAvCropReset')){
     S.avatar.py=Math.max(0,Math.min(100, drag.py - (e.clientY-drag.y)*k));
     applyAvatarVars();
   });
-  function end(){ if(!drag) return; drag=null; saveSettings({avatar:{px:Math.round(S.avatar.px),py:Math.round(S.avatar.py)}}); }
+  function end(){ if(!drag) return; drag=null; saveSettings({avatar:{px:Math.round(S.avatar.px),py:Math.round(S.avatar.py)}}); try{ flushSettings(); }catch(e){} }
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
 })();
 $('avBorder').oninput = function(e){ S.avatar.border=+e.target.value; $('avBorderV').textContent=e.target.value; applyState(); };
@@ -3205,8 +3223,9 @@ async function afterAvatarUpload(meta, isGroup){
       }
     }catch(e){ toast('改群图片失败'); }
   } else {
-    await saveSettings({avatar:{url:'/media/'+meta.file_id, removeBg:false}});
     S.avatar.url='/media/'+meta.file_id; preloadImage(S.avatar.url);
+    saveSettings({avatar:{url:S.avatar.url, removeBg:false}});
+    try{ await flushSettings(); }catch(e){}
     applyState(); toast('AI 头像已更新');
   }
 }
@@ -3335,7 +3354,8 @@ $('btnRmBg').onclick = async function(){
     var r = await fetch('/api/files/'+m[1]+'/removebg', {method:'POST'});
     if(!r.ok){ toast('背景不纯，无法自动去背'); return; }
     var meta = await r.json();
-    await saveSettings({avatar:{url:'/media/'+meta.file_id, removeBg:true}});
+    saveSettings({avatar:{url:'/media/'+meta.file_id, removeBg:true}});
+    try{ await flushSettings(); }catch(e){}
     toast('已去背，主体透明显示');
   }catch(e){ toast('去背失败'); }
 };
@@ -3375,6 +3395,10 @@ function sheetUI(id){
 }
 function openSheet(id){
   if(id==='sheetTheme' && window.__bgDragShow) window.__bgDragShow(true);
+  // 弹层滑入时关掉毛玻璃和阴影，滑完再恢复：开菜单不掉帧
+  document.body.classList.add('sliding');
+  clearTimeout(window.__slideT);
+  window.__slideT = setTimeout(function(){ document.body.classList.remove('sliding'); }, 280);
   sheetUI(id);
   if(!sheetOpen){ sheetOpen = true; history.pushState({sheet:id}, ''); }
 }
@@ -3800,13 +3824,25 @@ $('btnAt').onclick = function(){ openAtSheet(); };
 
 if(window.visualViewport){
   var vv=window.visualViewport;
+  var _kbNow = 0;
   var fixKb=function(){
-    var kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    var kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    if(Math.abs(kb - _kbNow) < 2 && kb > 0) return;
+    _kbNow = kb;
     var c=$('composer');
     if(c) c.style.bottom = kb>40 ? (kb+'px') : '0';
+    // 键盘顶起来时列表要跟着缩短，否则底部消息被输入栏挡住
+    var list=$('list');
+    if(list){
+      list.style.paddingBottom = (150 + kb) + 'px';
+      if(kb>40){
+        try{ list.scrollTop = list.scrollHeight; }catch(e){}
+      }
+    }
     if(kb>40 && $('input')===document.activeElement){ setTimeout(function(){ try{ $('input').scrollIntoView({block:'nearest'}); }catch(e){} }, 60); }
   };
   vv.addEventListener('resize', fixKb); vv.addEventListener('scroll', fixKb);
+  window.addEventListener('resize', fixKb);
 }
 $('input').addEventListener('input', function(){ try{ saveDraft(); }catch(e){} });
 $('input').addEventListener('input', function(){
