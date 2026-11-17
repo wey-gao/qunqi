@@ -30,6 +30,16 @@ import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import android.media.MediaScannerConnection;
+import android.os.Environment;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class MainActivity extends Activity {
     /* 界面内置在 APK 里，启动不再等网络；接口仍连服务器 */
@@ -113,7 +123,12 @@ public class MainActivity extends Activity {
                     i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(i);
                 } else {
-                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                    // 图片/文件：走应用内下载，直接落到相册或下载目录，不再跳浏览器
+                    String nm = cd != null ? cd : "";
+                    int q = nm.indexOf("filename=");
+                    if (q >= 0) nm = nm.substring(q + 9).replace("\"", "").trim();
+                    if (nm.isEmpty()) nm = fileNameFromUrl(url, mime);
+                    downloadToDevice(url, nm, mime);
                 }
             } catch (Exception ignored) {}
         });
@@ -184,6 +199,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new PushBridge(), "NativePush");
         web.addJavascriptInterface(new PermBridge(), "NativePerm");
         web.addJavascriptInterface(new ClipBridge(), "NativeClip");
+        web.addJavascriptInterface(new SaveBridge(), "NativeSave");
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView v, android.webkit.ValueCallback<Uri[]> cb,
@@ -442,6 +458,129 @@ public class MainActivity extends Activity {
                     startActivity(i);
                 } catch (Throwable ignored) {}
             });
+        }
+    }
+
+    /** 应用内下载：图片进相册，其它进“下载/Qunqi”，不再跳浏览器 */
+    private void downloadToDevice(final String url, final String rawName, final String mime) {
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
+        new Thread(() -> {
+            InputStream in = null;
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(60000);
+                c.setInstanceFollowRedirects(true);
+                c.setRequestProperty("User-Agent", "Qunqi/1.0");
+                String ctype = c.getContentType();
+                String type = (ctype != null && ctype.contains(";")) ? ctype.substring(0, ctype.indexOf(';')) : ctype;
+                if (type == null || type.isEmpty()) type = mime;
+                boolean image = type != null && type.startsWith("image/");
+                String name = safeFileName(rawName, type, url);
+                in = c.getInputStream();
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    if (type != null) v.put(MediaStore.MediaColumns.MIME_TYPE, type);
+                    v.put(MediaStore.MediaColumns.RELATIVE_PATH, image ? "Pictures/Qunqi" : "Download/Qunqi");
+                    v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                    Uri coll = image ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                    Uri item = getContentResolver().insert(coll, v);
+                    if (item == null) throw new java.io.IOException("无法创建媒体条目");
+                    OutputStream out = getContentResolver().openOutputStream(item);
+                    copy(in, out);
+                    v.clear(); v.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                    getContentResolver().update(item, v, null, null);
+                } else {
+                    if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                        runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1011));
+                        toastUi("请允许存储权限后再保存");
+                        return;
+                    }
+                    File dir = new File(Environment.getExternalStoragePublicDirectory(
+                            image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS), "Qunqi");
+                    if (!dir.exists()) dir.mkdirs();
+                    File f = new File(dir, name);
+                    OutputStream out = new FileOutputStream(f);
+                    copy(in, out);
+                    MediaScannerConnection.scanFile(this, new String[]{f.getAbsolutePath()}, new String[]{type}, null);
+                }
+                toastUi(image ? "已保存到相册" : "已保存到下载目录");
+            } catch (Throwable e) {
+                toastUi("保存失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            } finally {
+                try { if (in != null) in.close(); } catch (Exception ignored) {}
+            }
+        }).start();
+    }
+
+    private void copy(InputStream in, OutputStream out) throws java.io.IOException {
+        try {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        } finally {
+            try { out.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void toastUi(final String msg) {
+        runOnUiThread(() -> {
+            try { android.widget.Toast.makeText(MainActivity.this, msg, android.widget.Toast.LENGTH_SHORT).show(); } catch (Throwable ignored) {}
+        });
+    }
+
+    private String safeFileName(String raw, String type, String url) {
+        String name = raw == null ? "" : raw.trim();
+        if (name.isEmpty()) name = fileNameFromUrl(url, type);
+        StringBuilder sb = new StringBuilder();
+        String bad = "/\\:*?\"<>|";
+        for (char ch : name.toCharArray()) sb.append(bad.indexOf(ch) >= 0 ? '_' : ch);
+        name = sb.toString();
+        if (name.length() > 90) {
+            int dot = name.lastIndexOf('.');
+            String ext = dot > 0 ? name.substring(dot) : "";
+            name = name.substring(0, 80) + ext;
+        }
+        if (name.indexOf('.') < 0) name = name + extFor(type, url);
+        return name;
+    }
+
+    private String fileNameFromUrl(String url, String type) {
+        try {
+            String p = Uri.parse(url).getLastPathSegment();
+            if (p != null && !p.isEmpty()) return p + extFor(type, url);
+        } catch (Throwable ignored) {}
+        return "qunqi-" + System.currentTimeMillis() + extFor(type, url);
+    }
+
+    private String extFor(String type, String url) {
+        if (type != null) {
+            if (type.contains("jpeg")) return ".jpg";
+            if (type.contains("png")) return ".png";
+            if (type.contains("webp")) return ".webp";
+            if (type.contains("gif")) return ".gif";
+            if (type.contains("mp4")) return ".mp4";
+            if (type.contains("pdf")) return ".pdf";
+        }
+        String u = url == null ? "" : url.toLowerCase();
+        int q = u.indexOf('?');
+        if (q > 0) u = u.substring(0, q);
+        int dot = u.lastIndexOf('.');
+        if (dot > 0 && u.length() - dot <= 6) return u.substring(dot);
+        return "";
+    }
+
+    class SaveBridge {
+        /** 页面里点“保存/下载”时调用；返回 true 表示已交给原生处理 */
+        @android.webkit.JavascriptInterface
+        public boolean save(final String url, final String name) {
+            if (!bridgeAllowed()) return false;
+            if (url == null || url.trim().isEmpty()) return false;
+            try {
+                downloadToDevice(url.trim(), name, null);
+                return true;
+            } catch (Throwable e) { return false; }
         }
     }
 
