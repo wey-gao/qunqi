@@ -152,7 +152,7 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 .vhead b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 .vhead button,.vhead a{background:rgba(255,255,255,.1);border:0;color:#dfe5ec;padding:6px 10px;border-radius:7px;font-size:12px;cursor:pointer;text-decoration:none}
 #vbody{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:10px}
-#vbody img{max-width:100%;max-height:100%;object-fit:contain}
+#vbody img{max-width:100%;max-height:100%;object-fit:contain;touch-action:none;transform-origin:center center;will-change:transform;user-select:none;-webkit-user-drag:none}
 #vbody video{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain;background:#000}
 #vbody iframe{width:100%;height:100%;border:0;border-radius:8px;background:#fff}
 #vbody.txt{align-items:flex-start}#vbody pre{background:#0f1216;color:#dfe5ec;padding:14px;border-radius:10px;font-size:12.5px;line-height:1.6;max-width:760px;width:100%;max-height:100%;overflow:auto;white-space:pre-wrap;margin:0}
@@ -2402,7 +2402,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.55', UP_URL = '';
+var APP_VER = '0.53.56', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2835,12 +2835,30 @@ async function upload(blobOrFile, name, mime){
   return meta;
 }
 
+var VSRC='', VNAME='', VDL='';
+function absUrl(u){
+  if(!u) return '';
+  if(/^http/i.test(u) || u.indexOf('file:')===0 || u.indexOf('blob:')===0) return u;
+  return location.origin + (u.charAt(0)==='/'?'':'/') + u;
+}
+function nativeSave(u, name){
+  try{ if(window.NativeSave && window.NativeSave.save){ return window.NativeSave.save(absUrl(u), name||VNAME||'qunqi'); } }catch(e){}
+  return false;
+}
+var VZ={s:1,x:0,y:0};
+function vApply(){
+  var im=$('vimg'); if(!im) return;
+  im.style.transform='translate3d('+VZ.x+'px,'+VZ.y+'px,0) scale('+VZ.s+')';
+}
+function vResetZoom(){ VZ={s:1,x:0,y:0}; vApply(); }
 function openViewer(kind, src, title, dl){
   $('vTitle').textContent = title || '预览';
+  VSRC=src||''; VDL=dl||src||''; VNAME=(title||'qunqi').replace(/[\/:*?"<>|]/g,'_');
   $('vDown').href = dl || src;
   var body = $('vbody');
   body.classList.toggle('txt', kind==='text');
-  if(kind==='image') body.innerHTML = '<img src="'+esc(src)+'">';
+  vResetZoom();
+  if(kind==='image') body.innerHTML = '<img id="vimg" src="'+esc(src)+'">';
   else if(kind==='video') body.innerHTML = '<video controls autoplay playsinline webkit-playsinline preload="metadata" poster="/poster/'+(String(src).match(/\/media\/([^?]+)/)||[,''])[1]+'" src="'+esc(src)+'" style="max-height:100%"></video>';
   else if(kind==='audio') body.innerHTML = '<audio controls autoplay src="'+esc(src)+'"></audio>';
   else if(kind==='pdf') body.innerHTML = '<iframe src="'+esc(src)+'"></iframe>';
@@ -2848,6 +2866,10 @@ function openViewer(kind, src, title, dl){
   $('viewer').classList.add('show');
 }
 function closeViewer(){ $('viewer').classList.remove('show'); $('vbody').innerHTML=''; }
+$('vDown').onclick = function(e){
+  if(!VDL) return;
+  if(nativeSave(VDL, VNAME)){ e.preventDefault(); toast('已保存到手机'); }
+};
 $('viewer').onclick = function(e){
   if(e.target.id==='viewer' || e.target.hasAttribute('data-vclose')) closeViewer();
 };
@@ -4139,11 +4161,14 @@ $('btnQuoteImg').onclick=function(){
 };
 $('btnSaveImg').onclick=function(){
   if(!IMG_TARGET) return;
-  var a=document.createElement('a');
-  a.href='/api/files/'+IMG_TARGET.dataset.view; a.download=IMG_TARGET.dataset.title||'image.png';
-  a.target='_blank'; document.body.appendChild(a); a.click(); a.remove();
-  toast('已开始保存');
+  var url='/api/files/'+IMG_TARGET.dataset.view;
+  var nm=(IMG_TARGET.dataset.title||'qunqi')+'.jpg';
   closeSheets();
+  if(nativeSave(url, nm)){ toast('已保存到相册'); return; }
+  var a=document.createElement('a');
+  a.href=url; a.download=nm; a.target='_blank';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('已开始保存');
 };
 function setReplyBySeq(seq){
   var row=document.querySelector('.row[data-seq="'+seq+'"]');
@@ -4165,6 +4190,79 @@ document.addEventListener('click', function(e){
   if(!$('emoji').contains(e.target) && e.target.id!=='btnEmoji') $('emoji').classList.remove('show');
 });
 $('replybar').querySelector('.x').onclick = clearReply;
+
+
+/* ===== 预览大图：双指缩放 + 拖动 + 双击放大 ===== */
+(function(){
+  var body=$('vbody'); if(!body) return;
+  var pts={}, startDist=0, startScale=1, startX=0, startY=0, startMidX=0, startMidY=0, mode=0, lastTap=0;
+  function nT(e){ return Math.max(e.touches?e.touches.length:1, e.pointerType?1:1); }
+  function dist(t){
+    var dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY;
+    return Math.sqrt(dx*dx+dy*dy);
+  }
+  function mid(t){ return {x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2}; }
+  function clampPan(){
+    if(VZ.s<=1){ VZ.x=0; VZ.y=0; return; }
+    var w=body.clientWidth*VZ.s, h=body.clientHeight*VZ.s;
+    var maxX=Math.max(0,(w-body.clientWidth)/2), maxY=Math.max(0,(h-body.clientHeight)/2);
+    VZ.x=Math.min(maxX,Math.max(-maxX,VZ.x));
+    VZ.y=Math.min(maxY,Math.max(-maxY,VZ.y));
+  }
+  body.addEventListener('touchstart', function(e){
+    if(!$('vimg')) return;
+    if(e.touches.length===2){
+      mode=2; startDist=dist(e.touches); startScale=VZ.s;
+      var m2=mid(e.touches); startMidX=m2.x; startMidY=m2.y; startX=VZ.x; startY=VZ.y;
+      e.preventDefault();
+    } else if(e.touches.length===1){
+      mode=1; startX=VZ.x; startY=VZ.y;
+      pts.x=e.touches[0].clientX; pts.y=e.touches[0].clientY;
+    }
+  }, {passive:false});
+  body.addEventListener('touchmove', function(e){
+    if(!$('vimg')) return;
+    if(mode===2 && e.touches.length===2){
+      var d=dist(e.touches), k=startDist>0?d/startDist:1;
+      VZ.s=Math.min(5,Math.max(1,startScale*k));
+      var m2=mid(e.touches);
+      VZ.x=startX+(m2.x-startMidX); VZ.y=startY+(m2.y-startMidY);
+      clampPan(); vApply(); e.preventDefault();
+    } else if(mode===1 && e.touches.length===1 && VZ.s>1.01){
+      VZ.x=startX+(e.touches[0].clientX-pts.x);
+      VZ.y=startY+(e.touches[0].clientY-pts.y);
+      clampPan(); vApply(); e.preventDefault();
+    }
+  }, {passive:false});
+  body.addEventListener('touchend', function(e){
+    if(e.touches.length===1 && mode===2){ mode=1; startX=VZ.x; startY=VZ.y; pts.x=e.touches[0].clientX; pts.y=e.touches[0].clientY; return; }
+    if(e.touches.length===0){
+      mode=0;
+      if(VZ.s<1.04){ VZ.s=1; VZ.x=0; VZ.y=0; }
+      else clampPan();
+      vApply();
+      // 双击放大/还原
+      var now=Date.now();
+      if(now-lastTap<260 && !e.touches.length && VZ.s<=1.01){
+        VZ.s=2.5; clampPan(); vApply(); lastTap=0; return;
+      }
+      lastTap=now;
+    }
+  });
+  body.addEventListener('dblclick', function(e){
+    if(!$('vimg')) return;
+    e.preventDefault();
+    if(VZ.s>1.01){ VZ.s=1; VZ.x=0; VZ.y=0; } else { VZ.s=2.5; }
+    clampPan(); vApply();
+  });
+  body.addEventListener('wheel', function(e){
+    if(!$('vimg')) return;
+    e.preventDefault();
+    VZ.s=Math.min(5,Math.max(1,VZ.s+(e.deltaY<0?0.2:-0.2)));
+    if(VZ.s<=1.01){ VZ.s=1; VZ.x=0; VZ.y=0; }
+    clampPan(); vApply();
+  }, {passive:false});
+})();
 
 /* ============ 语音条 ============ */
 var recStream=null, recorder=null, recChunks=[], recStart=0, recTimer=null, recording=false;
