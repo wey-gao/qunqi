@@ -2584,9 +2584,17 @@ APP_VERSION = os.getenv("APP_VERSION") or _read_ver_file("APP_VERSION") or BACKE
 
 
 @app.get("/api/apk")
-async def api_apk():
-    """固定下载地址，避免 CDN 临时链接过期导致更新失败。
-    文件名带版本号并禁用缓存，浏览器/下载器才不会拿旧包当新包装上。"""
+@app.get("/api/apk/{name:path}")
+async def api_apk(name: str = ""):
+    """APK 下载。
+
+    路径必须支持 /api/apk/Qunqi-v0.53.62.apk 这种形式：
+    原生下载器 extFor() 只认 jpeg/png/webp/gif/mp4/pdf，APK 的 MIME
+    落不到任何分支，只能靠 URL 里的扩展名。URL 是 /api/apk 时
+    lastPathSegment 取出来是 "apk"，没有点，最终文件名变成无后缀的
+    "apk"，系统认不出是安装包，点了也装不上。
+    让路径末尾带 .apk，原生才会拼出可识别的文件名。
+    """
     p = STATIC / "AI-Chat.apk"
     if not p.exists():
         raise HTTPException(404, "APK 未上传")
@@ -2602,8 +2610,12 @@ async def api_apk():
 async def api_version():
     av = get_setting("app_version", APP_VERSION)
     apk_url = get_setting("apk_url", "")
-    if apk_url and "?" not in apk_url:
-        # 带版本号查询串，绕过客户端和中间缓存
+    # URL 末尾必须是 .apk：原生下载器从 URL 取扩展名，路径没有后缀
+    # 会拼出一个无扩展名的文件，系统认不出是安装包
+    _v = "".join(ch for ch in str(av) if ch.isalnum() or ch in "._-")
+    if apk_url in ("", "/api/apk"):
+        apk_url = f"/api/apk/Qunqi-v{_v}.apk"
+    elif "?" not in apk_url:
         apk_url = apk_url + "?v=" + str(av)
     return {"version": BACKEND_VERSION,
             "app_version": av,
@@ -2632,7 +2644,11 @@ async def api_push_update(request: Request):
     ver = str(body.get("version") or "").strip()
     if not ver:
         raise HTTPException(400, "缺少版本号")
-    set_setting("apk_url", body.get("apk_url", ""))
+    _au = str(body.get("apk_url", "") or "").strip()
+    if _au in ("", "/api/apk"):
+        _v = "".join(ch for ch in ver if ch.isalnum() or ch in "._-")
+        _au = f"/api/apk/Qunqi-v{_v}.apk"
+    set_setting("apk_url", _au)
     set_setting("apk_notes", body.get("notes", ""))
     set_setting("apk_pushed_at", int(time.time()))
     global APP_VERSION

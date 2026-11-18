@@ -190,7 +190,7 @@ header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:
 #toast.show{opacity:1;transform:translateX(-50%)}
 
 @media (max-width:760px){
-  #side{position:fixed;top:0;bottom:0;left:0;z-index:var(--z-dock);transform:translate3d(-100%,0,0);transition:transform .22s cubic-bezier(.22,.86,.24,1);width:min(280px,86vw);will-change:transform;backface-visibility:hidden;box-shadow:none;border-right:1px solid var(--line)}
+  #side{position:fixed;top:0;bottom:0;left:0;z-index:var(--z-drawer);transform:translate3d(-100%,0,0);transition:transform .22s cubic-bezier(.22,.86,.24,1);width:min(280px,86vw);will-change:transform;backface-visibility:hidden;box-shadow:none;border-right:1px solid var(--line)}
   #side.show{transform:translate3d(0,0,0)}
   #menuBtn{display:grid}
   #list{padding-bottom:152px}
@@ -704,6 +704,7 @@ body.tstyle-glass .day::before,body.tstyle-glass .day::after{display:none}
 .sheet{overflow-x:clip}
 /* 左栏拉出时，聊天区背景虚化 */
 body.sideopen #mask{background:rgba(10,14,20,.16);backdrop-filter:none}
+body.sideopen #mask{z-index:calc(var(--z-dock) - 1)}
 body.sideopen #main{filter:blur(2.5px) saturate(.9) brightness(.97);transition:filter .18s ease}
 body.sliding .sheet,body.sliding #side{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:var(--sh-1)}
 body.sliding #main{transition:none}
@@ -2482,7 +2483,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.60', UP_URL = '';
+var APP_VER = '0.53.63', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2495,6 +2496,9 @@ function showUpdate(v, url, notes){
     if(!UP_URL){ toast('服务器还没配置下载地址'); return; }
     var abs = UP_URL;
     if(abs.indexOf('http')!==0 && API_BASE) abs = API_BASE.replace(/\/+$/,'') + (abs.charAt(0)==='/' ? abs : '/'+abs);
+    // 原生下载器只把包存进 Download/Qunqi，不会自动装。
+    // 文件名靠 URL 里的 .apk 后缀才认得出来，所以这里必须传带 .apk 的地址。
+    toast('正在下载…完成后请到 文件管理 → Download → Qunqi 点安装');
     location.href = abs;
   };
 }
@@ -3624,11 +3628,13 @@ function openSheet(id){
   window.__slideT = setTimeout(function(){ document.body.classList.remove('sliding'); }, 280);
   sheetUI(id);
   if(!sheetOpen){ sheetOpen = true; history.pushState({sheet:id}, ''); }
+  else { try { history.replaceState({sheet:id}, ''); } catch(e){} }  // 换层时同步 state，别留下旧 id
 }
+var _popGuard = 0;   // 自己调 history.back() 时不希望 popstate 再关一次
 function closeSheets(fromPop){
   if(window.__bgDragShow) window.__bgDragShow(false);
   sheetUI(null); sheetOpen = false;
-  if(!fromPop && history.state && history.state.sheet){ history.back(); }
+  if(!fromPop && history.state && history.state.sheet){ _popGuard++; history.back(); }
 }
 var _cfCb = null;
 function askConfirm(msg){
@@ -3649,7 +3655,10 @@ $('mask').onclick = function(){
   if(sheetOpen) closeSheets(); else closeSheets(true);
 };
 Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function(b){ b.onclick = function(){ closeSheets(); }; });
-window.addEventListener('popstate', function(){ if(sheetOpen){ sheetOpen=false; sheetUI(null); } });
+window.addEventListener('popstate', function(){
+  if(_popGuard > 0){ _popGuard--; return; }   // 这是我们自己 back 出来的，别关
+  if(sheetOpen){ sheetOpen = false; sheetUI(null); }
+});
 window.addEventListener('keydown', function(e){ if(e.key==='Escape'){ closeSheets(); } });
 
 $('btnTheme').onclick = function(){ renderThemes(); openSheet('sheetTheme'); };
@@ -3748,8 +3757,13 @@ $('btnSet2').onclick = function(){ refreshSetInfo(); openSheet('sheetSet'); };
 $('btnPlugin2').onclick = async function(){ await loadPlugins(); openSheet('sheetPlugin'); };
 $('btnPlugin').onclick = async function(){ await loadPlugins(); openSheet('sheetPlugin'); };
 $('menuBtn').onclick = function(){
-  if($('side').classList.contains('show')){ closeSheets(true); }
-  else { $('side').classList.add('show'); $('mask').classList.add('show'); document.body.classList.add('sideopen'); }
+  if($('side').classList.contains('show')){ closeSheets(); return; }
+  // 打开左抽屉：先清干净其它弹层，再统一走同一套状态
+  sheetUI(null);
+  $('side').classList.add('show');
+  $('mask').classList.add('show');
+  document.body.classList.add('sideopen');
+  if(!sheetOpen){ sheetOpen = true; history.pushState({sheet:'side'}, ''); }
 };
 async function refreshConvs(){
   var r = await fetch('/api/convs?device='+encodeURIComponent(DEV));
