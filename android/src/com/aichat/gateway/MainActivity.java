@@ -66,7 +66,11 @@ public class MainActivity extends Activity {
     static boolean isVisible() { return visible; }
 
     @Override
-    protected void onResume() { super.onResume(); visible = true; }
+    protected void onResume() {
+        super.onResume();
+        visible = true;
+        try { PushService.ensureChannels(this); PushService.startIfConfigured(this); } catch (Throwable ignored) {}
+    }
     @Override
     protected void onPause() { visible = false; super.onPause(); }
 
@@ -1039,6 +1043,7 @@ public class MainActivity extends Activity {
                 long poll = p.getLong("last_poll", 0);
                 return "{\"service\":" + (PushService.isRunning() ? "true" : "false")
                         + ",\"enabled\":" + (nmState == 1 ? "true" : "false")
+                        + ",\"startedAt\":" + p.getLong("started_at", 0)
                         + ",\"lastPoll\":" + poll
                         + ",\"lastErr\":" + jsStr(p.getString("last_err", ""))
                         + ",\"dnd\":" + (p.getBoolean("dnd", false) ? "true" : "false") + "}";
@@ -1072,6 +1077,33 @@ public class MainActivity extends Activity {
                         .build();
                 nm.notify(conv == null ? 4100 : conv.hashCode(), n);
             } catch (Throwable ignored) {}
+        }
+
+        @JavascriptInterface
+        public void test() {
+            if (!bridgeAllowed()) return;
+            try {
+                PushService.ensureChannels(MainActivity.this);
+                android.app.NotificationManager nm =
+                        (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm == null) { toastUi("系统通知服务不可用"); return; }
+                if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                    toastUi("还没给通知权限，请先点“设置”允许通知");
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1010);
+                    return;
+                }
+                Notification n = new Notification.Builder(MainActivity.this,
+                        Build.VERSION.SDK_INT >= 26 ? PushService.CH_MSG : null)
+                        .setContentTitle("群栖：测试通知")
+                        .setContentText("看到这条说明系统通知是通的")
+                        .setSmallIcon(R.mipmap.ic_launcher)
+                        .setAutoCancel(true)
+                        .build();
+                nm.notify(4200, n);
+            } catch (Throwable e) {
+                toastUi("测试通知失败：" + e.getClass().getSimpleName());
+            }
         }
 
         @JavascriptInterface

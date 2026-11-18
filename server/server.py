@@ -3074,6 +3074,8 @@ async def push_poll(request: Request, device: str = "", since: int = 0):
                           "text": text[:120], "ts": int(m["ts"] or 0), "seq": int(m["seq"] or 0)})
     conn.close()
     items.sort(key=lambda x: x["ts"])
+    if items:
+        print(f"[push] uid={uid} since={since} items={len(items)} -> notify up to {items[-1]['ts']}", flush=True)
     return {"items": items[-20:], "max_ts": mx}
 
 

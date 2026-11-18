@@ -76,6 +76,10 @@ public class PushService extends Service {
                 .build();
         try { startForeground(ID_SVC, n); } catch (Throwable ignored) {}
         alive = true;
+        try {
+            if (prefs(this).getLong("started_at", 0) == 0)
+                prefs(this).edit().putLong("started_at", System.currentTimeMillis()).apply();
+        } catch (Throwable ignored) {}
         if (!running) { running = true; startWorker(); }
         return START_STICKY;
     }
@@ -178,6 +182,7 @@ public class PushService extends Service {
     public void onDestroy() {
         running = false;
         alive = false;
+        try { prefs(this).edit().putLong("started_at", 0).apply(); } catch (Throwable ignored) {}
         if (worker != null) worker.interrupt();
         super.onDestroy();
     }
