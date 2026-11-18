@@ -1814,6 +1814,8 @@ def apply_actions(actions: list, conv: str | None = None, actor: int = BOT_ID) -
             elif t == "font.set":
                 if "size" in p:
                     st["font"]["size"] = max(13, min(20, int(p["size"])))
+                if p.get("family") in ("sans", "serif", "kai", "mono", "round"):
+                    st["font"]["family"] = p["family"]
             elif t == "bubble.set":
                 if "radius" in p:
                     st["bubble"]["radius"] = max(4, min(24, int(p["radius"])))
@@ -2809,6 +2811,8 @@ async def put_settings(request: Request, device: str = ""):
     st["bg"]["blur"] = max(0, min(24, int(st["bg"]["blur"])))
     st["bg"]["rotate"] = max(0, min(180, int(st["bg"].get("rotate") or 0)))
     st["font"]["size"] = max(13, min(20, int(st["font"]["size"])))
+    if st["font"].get("family") not in ("sans", "serif", "kai", "mono", "round"):
+        st["font"]["family"] = "sans"
     fcol = str(st["font"].get("color") or "").strip()
     st["font"]["color"] = fcol if re.match(r"^#[0-9a-fA-F]{6}$", fcol) else ""
     if json.dumps(st, sort_keys=True, ensure_ascii=False) == json.dumps(ui_state(), sort_keys=True, ensure_ascii=False):

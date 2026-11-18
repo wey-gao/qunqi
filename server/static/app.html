@@ -15,6 +15,7 @@
 :root{
   --bg:#121417;--panel:#1b1f25;--panel2:#232830;--line:#2c323b;--ink:#e8ecf1;--dim:#8f98a4;
   --accent:#3fb8a0;--user:#2a3a3a;--ai:rgba(35,40,48,.92);--fs:15px;--radius:14px;
+  --fontf:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
   /* 圆角阶梯 */
   --r-sm:6px;--r-md:10px;--r-lg:14px;--r-xl:20px;--r-full:999px;
   /* 阴影阶梯 */
@@ -29,7 +30,7 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
-body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;overflow:hidden}
+body{background:var(--bg);color:var(--ink);font:var(--fs)/1.6 var(--fontf);overflow:hidden}
 #bg{will-change:filter;position:fixed;inset:0;z-index:var(--z-base);background:var(--bg) center/cover no-repeat;transform:translate(var(--bgX,0),var(--bgY,0)) scale(var(--bgZoom,1.02)) rotate(var(--bgRot,0deg)) translateZ(0);transform-origin:center}
 #bgOverlay{position:fixed;inset:0;z-index:var(--z-base);background:#05070a;opacity:.15;pointer-events:none}
 #app{display:flex;height:100vh;height:100dvh;height:var(--vvh,100dvh);position:relative}
@@ -1283,7 +1284,15 @@ button,.btn,.chip,.tab{transition:background var(--t-fast) var(--ease),color var
         <button type="button" class="sw" data-c="#12b7f5" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#12b7f5"></button>
         <button type="button" class="sw" data-c="#e8ecf1" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#e8ecf1"></button>
         <button type="button" class="sw" data-c="#7a4fd4" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#7a4fd4"></button>
-      </div>      <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>      <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
+      </div>
+<div class="sec"><h4>字体</h4></div>
+<div id="fontFam" style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
+  <button type="button" class="wbtn famBtn" data-f="sans" style="width:auto;margin:0;padding:7px 10px;font-size:12px">系统</button>
+  <button type="button" class="wbtn famBtn" data-f="serif" style="width:auto;margin:0;padding:7px 10px;font-size:12px">宋体</button>
+  <button type="button" class="wbtn famBtn" data-f="kai" style="width:auto;margin:0;padding:7px 10px;font-size:12px">楷体</button>
+  <button type="button" class="wbtn famBtn" data-f="mono" style="width:auto;margin:0;padding:7px 10px;font-size:12px">等宽</button>
+</div>
+      <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>      <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
     </div>
   </div>
 </div>
@@ -1675,8 +1684,16 @@ function applyAvatarVars(){
   r.setProperty('--avY', Math.max(0, Math.min(100, Number(S.avatar.py==null?50:S.avatar.py)))+'%');
   r.setProperty('--avScale', String(Math.max(1, Math.min(2.4, Number(S.avatar.scale||1)))));
 }
+var FONT_FAMILIES={
+  sans:'-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif',
+  serif:'"Noto Serif SC","Songti SC","Source Han Serif SC","SimSun",serif',
+  kai:'"Kaiti SC","KaiTi","STKaiti","Noto Serif SC",serif',
+  mono:'"JetBrains Mono","Noto Sans Mono","Cascadia Mono","Source Code Pro",monospace',
+  round:'"HarmonyOS Sans SC","MiSans","Noto Sans SC","PingFang SC",sans-serif'
+};
 function applyLook(){
   var r = document.documentElement.style;
+  r.setProperty('--fontf', FONT_FAMILIES[(S.font&&S.font.family)||'sans'] || FONT_FAMILIES.sans);
   r.setProperty('--fs', (S.font && S.font.size ? S.font.size : 15)+'px');
   r.setProperty('--radius', (S.bubble.radius||14)+'px');
   r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
@@ -2483,7 +2500,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.63', UP_URL = '';
+var APP_VER = '0.53.64', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2662,6 +2679,11 @@ function connect(){
       var hitMe = (c.mentions||[]).indexOf(-1) >= 0 || (c.mentions||[]).indexOf(ME.uid) >= 0 || (c.text && ME.name && c.text.indexOf('@'+ME.name)>=0);
       if(f.client_msg_id && SENT[f.client_msg_id]){
         try{ clearTimeout(SENT[f.client_msg_id].dataset.timer); SENT[f.client_msg_id].classList.remove('sending'); delete SENT[f.client_msg_id]; }catch(e){}
+      }
+      var _fromOther = !(f.sender && String(f.sender.uid) === String(ME.uid));
+      if(_fromOther && (f.conv !== current || document.hidden || !document.hasFocus())){
+        var _cvn = (CONVS.filter(function(x){ return x.id===f.conv; })[0] || {}).name || '新消息';
+        localNotify(f.conv, _cvn, c.text || ((c.images||c.image) ? '[图片]' : '[新消息]'));
       }
       if(f.conv!==current){
         if(hitMe){ MENTION[f.conv]=(MENTION[f.conv]||0)+1; LS.setItem('gw_mention', JSON.stringify(MENTION)); }
@@ -3299,6 +3321,7 @@ function syncSheet(){
   $('bgZoom').value = S.bg.zoom||1.02; $('bgZoomV').textContent = Number($('bgZoom').value).toFixed(2);
   if($('bgRot')){ $('bgRot').value = S.bg.rotate||0; $('bgRotV').textContent = ($('bgRot').value)+'°'; }
   $('fontSize').value = S.font.size; $('fontSizeV').textContent = S.font.size;
+  try{ syncFontFam(); }catch(e){}
   var fcv = (S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'')) ? S.font.color : '';
   if($('fontColor')){ $('fontColor').value = fcv || '#111318'; }
   if($('fontColorV')){ $('fontColorV').textContent = fcv || '默认'; }
@@ -3424,6 +3447,25 @@ $('btnPureWhite').onclick = async function(){
 };
 $('fontSize').oninput = function(e){ S.font.size=+e.target.value; $('fontSizeV').textContent=e.target.value; applyLookSoon(); };
 $('fontSize').onchange = function(){ saveSettings({font:{size:S.font.size}}); };
+
+/* 字体族：系统 / 宋体 / 楷体 / 等宽 */
+function syncFontFam(){
+  var cur=(S.font && S.font.family) || 'sans';
+  Array.prototype.forEach.call(document.querySelectorAll('#fontFam .famBtn'), function(b){
+    var on = b.dataset.f===cur;
+    b.style.borderColor = on ? 'var(--accent)' : 'var(--line)';
+    b.style.color = on ? 'var(--accent)' : 'var(--ink)';
+  });
+}
+Array.prototype.forEach.call(document.querySelectorAll('#fontFam .famBtn'), function(b){
+  b.onclick=function(){
+    if(!S.font) S.font={size:15};
+    S.font.family=b.dataset.f;
+    applyLook(); syncFontFam();
+    saveSettings({font:{family:S.font.family}});
+  };
+});
+syncFontFam();
 $('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyLookSoon(); };
 $('bubR').onchange = function(){ saveSettings({bubble:{radius:S.bubble.radius}}); };
 $('bubO').oninput = function(e){ S.bubble.opacity=+e.target.value; $('bubOV').textContent=Math.round(S.bubble.opacity*100)+'%'; applyLookSoon(); };
@@ -3667,6 +3709,25 @@ $('btnTheme2').onclick = function(){ renderThemes(); openSheet('sheetTheme'); };
 var FEEDBACK_GH='https://github.com/wey-gao/qunqi';
 
 
+var _notifLast = {};
+function localNotify(conv, title, body){
+  try{
+    if(!window.NativeNotify) return;
+    var now = Date.now();
+    if(_notifLast[conv] && now - _notifLast[conv] < 2500) return;
+    _notifLast[conv] = now;
+    var txt = String(body || '').replace(/\s+/g, ' ').slice(0, 80);
+    NativeNotify.show(title || '新消息', txt, conv || '');
+  }catch(e){}
+}
+function nativeNotifyStatus(){
+  try{ return window.NativeNotify ? JSON.parse(NativeNotify.status()) : null; }catch(e){ return null; }
+}
+window.openConv = function(id){
+  if(!id) return;
+  try{ current = id; renderConvs(); loadConv(id); }catch(e){}
+};
+
 function nativePermStatus(){
   try{ return window.NativePerm ? JSON.parse(NativePerm.status()) : null; }catch(e){ return null; }
 }
@@ -3675,11 +3736,21 @@ function refreshNotifRow(){
   if(!st || !$('notifRow')) return;
   $('notifRow').style.display = '';
   var ok = st.notif && st.battery;
-  $('notifState').textContent = ok ? '已允许通知与后台' : (st.notif ? '后台可能被系统限制' : '通知未开启');
+  var ns = nativeNotifyStatus();
+  var extra = '';
+  if(ns){ extra = ns.service ? ' · 后台同步运行中' : ' · 后台同步未启动'; }
+  $('notifState').textContent = (ok ? '已允许通知与后台' : (st.notif ? '后台可能被系统限制' : '通知未开启')) + extra;
 }
 $('btnNotif').onclick = function(){
   var st = nativePermStatus() || {};
-  $('notifDetail').textContent = '通知：' + (st.notif ? '已允许' : '未允许') + '　省电白名单：' + (st.battery ? '已加入' : '未加入');
+  var ns0 = nativeNotifyStatus();
+  var line = '通知：' + (st.notif ? '已允许' : '未允许') + '　省电白名单：' + (st.battery ? '已加入' : '未加入');
+  if(ns0){
+    line += '\n后台同步：' + (ns0.service ? '运行中' : '未启动');
+    if(ns0.lastPoll){ line += '　最后检查：' + Math.max(0, Math.round((Date.now()-ns0.lastPoll)/1000)) + ' 秒前'; }
+    if(ns0.lastErr){ line += '\n最近错误：' + ns0.lastErr; }
+  }
+  $('notifDetail').textContent = line;
   openSheet('sheetNotif');
 };
 $('btnAskNotif').onclick = function(){

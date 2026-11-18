@@ -2,6 +2,10 @@ package com.aichat.gateway;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -81,6 +85,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         initServerUrls();
         try { init(); } catch (Throwable e) { showError(e); }
+        try { PushService.ensureChannels(this); PushService.startIfConfigured(this); } catch (Throwable ignored) {}
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
             try { requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1010); } catch (Throwable ignored) {}
         }
@@ -117,11 +122,8 @@ public class MainActivity extends Activity {
         web.setBackgroundColor(Color.parseColor("#0F1218"));
         web.setDownloadListener((url, ua, cd, mime, len) -> {
             try {
-                // APK 交给系统下载器/浏览器，WebView 自己不处理二进制
                 if (url != null && url.contains("/api/apk")) {
-                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(i);
+                    downloadAndInstall(url);
                 } else {
                     // 图片/文件：走应用内下载，直接落到相册或下载目录，不再跳浏览器
                     String nm = cd != null ? cd : "";
@@ -135,12 +137,10 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, String url) {
-                // 更新包链接：绝不让 WebView 去“渲染”APK，转给系统浏览器下载
+                // 更新包链接：应用内下载后直接调起安装，不跳浏览器
                 try {
                     if (url != null && url.contains("/api/apk")) {
-                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(i);
+                        downloadAndInstall(url);
                         return true;
                     }
                 } catch (Exception ignored) {}
@@ -200,6 +200,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new PermBridge(), "NativePerm");
         web.addJavascriptInterface(new ClipBridge(), "NativeClip");
         web.addJavascriptInterface(new SaveBridge(), "NativeSave");
+        web.addJavascriptInterface(new NotifyBridge(), "NativeNotify");
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView v, android.webkit.ValueCallback<Uri[]> cb,
@@ -327,6 +328,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        try {
+            String conv = intent.getStringExtra("conv");
+            if (conv != null && !conv.isEmpty() && web != null) {
+                web.postDelayed(() -> web.evaluateJavascript(
+                        "try{window.openConv&&openConv(" + jsStr(conv) + ");}catch(e){}", null), 500);
+            }
+        } catch (Throwable ignored) {}
         String code = joinCodeFrom(intent);
         if (code != null) {
             pendingJoin = code;
@@ -961,5 +969,116 @@ public class MainActivity extends Activity {
             })
             .setNegativeButton("取消", null)
             .show();
+    }
+
+    /* ---------- 更新包：应用内下载 + 直接调起系统安装 ---------- */
+    private static final String APK_AUTHORITY = "com.aichat.gateway.apk";
+
+    private void downloadAndInstall(final String url) {
+        if (url == null) return;
+        toastUi("正在下载更新包…");
+        new Thread(() -> {
+            InputStream in = null;
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(120000);
+                c.setInstanceFollowRedirects(true);
+                c.setRequestProperty("User-Agent", "Qunqi/1.0");
+                in = c.getInputStream();
+                File out = new File(getCacheDir(), "update.apk");
+                FileOutputStream fo = new FileOutputStream(out);
+                copy(in, fo);
+                try { fo.getFD().sync(); } catch (Throwable ignored) {}
+                fo.close();
+                final long len = out.length();
+                runOnUiThread(() -> {
+                    if (len < 100 * 1024) { toastUi("更新包下载不完整，请重试"); return; }
+                    installApk(out);
+                });
+            } catch (Throwable e) {
+                final String m = (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                runOnUiThread(() -> toastUi("更新包下载失败：" + m));
+            } finally {
+                try { if (in != null) in.close(); } catch (Exception ignored) {}
+            }
+        }).start();
+    }
+
+    private void installApk(File apk) {
+        try {
+            if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+                toastUi("请允许「安装未知应用」，允许后会自动继续");
+                try {
+                    startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Throwable ignored) {}
+            }
+            Uri uri = Uri.parse("content://" + APK_AUTHORITY + "/update.apk");
+            Intent it = new Intent(Intent.ACTION_VIEW);
+            it.setDataAndType(uri, "application/vnd.android.package-archive");
+            it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(it);
+            toastUi("下载完成，请在安装界面点「安装」");
+        } catch (Throwable e) {
+            toastUi("调起安装失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    /* ---------- 通知桥：前台消息落地通知 + 后台服务诊断 ---------- */
+    class NotifyBridge {
+        @JavascriptInterface
+        public String status() {
+            try {
+                SharedPreferences p = PushService.prefs(MainActivity.this);
+                int nmState = 1;
+                try {
+                    nmState = ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).areNotificationsEnabled() ? 1 : 0;
+                } catch (Throwable ignored) {}
+                long poll = p.getLong("last_poll", 0);
+                return "{\"service\":" + (PushService.isRunning() ? "true" : "false")
+                        + ",\"enabled\":" + (nmState == 1 ? "true" : "false")
+                        + ",\"lastPoll\":" + poll
+                        + ",\"lastErr\":" + jsStr(p.getString("last_err", ""))
+                        + ",\"dnd\":" + (p.getBoolean("dnd", false) ? "true" : "false") + "}";
+            } catch (Throwable e) { return "{}"; }
+        }
+
+        @JavascriptInterface
+        public void show(String title, String body, String conv) {
+            if (!bridgeAllowed()) return;
+            try {
+                PushService.ensureChannels(MainActivity.this);
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm == null) return;
+                SharedPreferences p = PushService.prefs(MainActivity.this);
+                if (p.getBoolean("dnd", false)) return;
+                if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return;
+                Intent open = new Intent(MainActivity.this, MainActivity.class);
+                open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                open.putExtra("conv", conv == null ? "" : conv);
+                PendingIntent pi = PendingIntent.getActivity(MainActivity.this, conv == null ? 0 : conv.hashCode(), open,
+                        PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
+                Notification n = new Notification.Builder(MainActivity.this,
+                        Build.VERSION.SDK_INT >= 26 ? PushService.CH_MSG : null)
+                        .setContentTitle(title == null ? "新消息" : title)
+                        .setContentText(body == null ? "" : body)
+                        .setStyle(new Notification.BigTextStyle().bigText(body == null ? "" : body))
+                        .setSmallIcon(R.mipmap.ic_launcher)
+                        .setAutoCancel(true)
+                        .setContentIntent(pi)
+                        .build();
+                nm.notify(conv == null ? 4100 : conv.hashCode(), n);
+            } catch (Throwable ignored) {}
+        }
+
+        @JavascriptInterface
+        public void clear() {
+            try {
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm != null) nm.cancelAll();
+            } catch (Throwable ignored) {}
+        }
     }
 }

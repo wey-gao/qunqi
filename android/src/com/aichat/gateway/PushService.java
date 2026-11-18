@@ -29,7 +29,10 @@ public class PushService extends Service {
     private static final int INTERVAL = 15000;
     private static final int MAX_INTERVAL = 120000;
     private volatile boolean running = false;
+    private static volatile boolean alive = false;
     private Thread worker;
+
+    static boolean isRunning() { return alive; }
 
     static SharedPreferences prefs(Context c) {
         return c.getSharedPreferences("push", Context.MODE_PRIVATE);
@@ -71,7 +74,8 @@ public class PushService extends Service {
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setOngoing(true)
                 .build();
-        startForeground(ID_SVC, n);
+        try { startForeground(ID_SVC, n); } catch (Throwable ignored) {}
+        alive = true;
         if (!running) { running = true; startWorker(); }
         return START_STICKY;
     }
@@ -115,6 +119,7 @@ public class PushService extends Service {
                     if (mx > 0) p.edit().putLong("since", mx).apply();
                     hadNews = (arr != null && arr.length() > 0);
                     boolean dnd = p.getBoolean("dnd", false);
+                    p.edit().putLong("last_poll", System.currentTimeMillis()).putString("last_err", "").apply();
                     if (hadNews && !MainActivity.isVisible() && !dnd) {
                         for (int i = Math.max(0, arr.length() - 3); i < arr.length(); i++) {
                             JSONObject m = arr.getJSONObject(i);
@@ -122,8 +127,12 @@ public class PushService extends Service {
                         }
                     }
                     if (hadNews) wait = INTERVAL;
-                } catch (Throwable ignored) {
+                } catch (Throwable e) {
                     hadNews = false;
+                    try {
+                        prefs(this).edit().putString("last_err",
+                                e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage())).apply();
+                    } catch (Throwable ignored) {}
                 }
                 if (!hadNews) wait = Math.min(wait * 2, MAX_INTERVAL);
                 try { Thread.sleep(wait); } catch (InterruptedException e) { break; }
@@ -168,6 +177,7 @@ public class PushService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        alive = false;
         if (worker != null) worker.interrupt();
         super.onDestroy();
     }
