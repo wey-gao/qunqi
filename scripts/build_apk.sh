@@ -16,6 +16,7 @@ WORK="$OUT/apk-src"
 rm -rf "$WORK"; cp -r "$SRC" "$WORK"
 mkdir -p "$WORK/assets"
 cp "$ROOT/server/static/app.html" "$WORK/assets/app.html"
+cp -r "$SRC/assets/." "$WORK/assets/" 2>/dev/null || true
 AV=$(grep -o "APP_VER *= *'[^']*'" "$WORK/assets/app.html" | head -1 | grep -o "[0-9][0-9.]*" || true)
 FV=$(cat "$ROOT/APP_VERSION" 2>/dev/null || echo "")
 if [ -n "$FV" ] && [ "$AV" != "$FV" ]; then

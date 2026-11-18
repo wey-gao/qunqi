@@ -212,6 +212,13 @@ public class MainActivity extends Activity {
                 // 内置动图背景直接从 APK assets 读，秒开且不耗流量
                 try {
                     String path = req.getUrl().getPath();
+                    // 完整字库内置在包里：拦截请求直接从 assets 读，离线也能换字体、不走流量
+                    if (path != null && path.startsWith("/api/font/")) {
+                        String name = path.substring("/api/font/".length());
+                        if (!name.equals("kai.woff2") && !name.equals("song.woff2")) return null;
+                        java.io.InputStream is = getAssets().open("fonts/" + name);
+                        return new WebResourceResponse("font/woff2", null, is);
+                    }
                     if (path != null && path.startsWith("/builtin/")) {
                         String name = path.substring("/builtin/".length());
                         if (name.contains("..") || name.contains("/")) return null;

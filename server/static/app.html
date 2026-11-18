@@ -807,6 +807,15 @@ button,.btn,.chip,.tab{transition:background var(--t-fast) var(--ease),color var
 @font-face{font-family:QunqiKai;src:url(/api/font/kai.woff2) format('woff2');font-display:swap;font-weight:400}
 @font-face{font-family:QunqiSong;src:url(/api/font/song.woff2) format('woff2');font-display:swap;font-weight:400}
 textarea,input,button,select{font-family:var(--fontf);}
+
+/* 主题面板分级：一次只展开一组，避免一屏几十个滑块 */
+.acc{border:1px solid var(--line);border-radius:12px;margin:0 0 10px;overflow:hidden}
+.accH{width:100%;display:flex;align-items:center;gap:8px;padding:13px 14px;background:none;border:0;font:inherit;color:var(--ink);text-align:left;cursor:pointer}
+.accS{flex:1;text-align:right;color:var(--dim);font-size:12px;font-weight:400;margin-right:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.accI{color:var(--dim);transition:transform .18s ease;display:inline-block}
+.acc.open .accI{transform:rotate(90deg)}
+.accB{display:none;padding:2px 14px 14px}
+.acc.open .accB{display:block}
 </style>
 </head>
 <body>
@@ -1235,69 +1244,97 @@ textarea,input,button,select{font-family:var(--fontf);}
 <div class="sheet" id="sheetTheme">
   <header><b>主题与外观</b><button class="close" data-close>×</button></header>
   <div class="body">
-    <div class="sec"><h4>主题预设</h4><div class="tgrid" id="themeGrid"></div></div>
-    <div class="sec">
-      <button class="wbtn" id="btnToggleThemes" type="button"><span id="ctTitle">自定义主题</span><span id="ctSub" style="color:var(--dim);font-size:12px"> · 本机保存</span></button>
-      <div id="customThemeList"></div>
-      <p class="sdesc" id="customThemeEmpty">还没有自定义主题</p>
-      <button class="wbtn" id="btnNewTheme" type="button">＋ 新建自定义主题</button>
-    </div>
-    <div class="sec" id="aiAvatarSec"><h4>AI 头像（仅管理员可改）</h4>
-      <div class="opt" id="shapeOpt"><button data-shape="circle">圆形</button><button data-shape="square">方形</button></div>
-      <div class="sld"><label>大小</label><input type="range" id="avSize" min="28" max="64" step="1"><output id="avSizeV"></output></div>
-      <div class="sld"><label>边框</label><input type="range" id="avBorder" min="0" max="6" step="1"><output id="avBorderV"></output></div>
-      <button class="wbtn" id="btnUpAvatar" type="button">上传 AI 头像</button>
-      <button class="wbtn" id="btnUpGroupAvatar" type="button" style="display:none">上传群图片</button>
-      <div class="avpv">
-        <div><div class="pv" id="pvAI"></div><div class="lab">AI 头像</div></div>
+
+    <div class="acc open" data-acc="theme">
+      <button class="accH" type="button">预设主题<span class="accS" id="accSumTheme">配色方案</span><span class="accI">›</span></button>
+      <div class="accB">
+        <div class="tgrid" id="themeGrid"></div>
+        <button class="wbtn" id="btnToggleThemes" type="button"><span id="ctTitle">自定义主题</span><span id="ctSub" style="color:var(--dim);font-size:12px"> · 本机保存</span></button>
+        <div id="customThemeList"></div>
+        <p class="sdesc" id="customThemeEmpty">还没有自定义主题</p>
+        <button class="wbtn" id="btnNewTheme" type="button">＋ 新建自定义主题</button>
       </div>
-      <button class="wbtn" id="btnRmBg" type="button">去掉头像背景（纯色底）</button>
-      <p class="sdesc" id="aiAvatarTip" style="display:none">AI 头像由服务器管理员统一维护，你可以到左侧“我的资料”里改自己的头像。</p>
     </div>
-    <div class="sec"><h4>头像取景（本机）</h4>
-      <p class="sdesc">在下面预览里直接拖动头像调整位置，滑块决定裁切多少；聊天里立刻生效，只影响这台设备。</p>
-      <div class="avcrop">
-        <div class="pvcrop" id="pvMe2"><span class="cropguide"></span></div>
-        <div class="cropctl">
-          <div class="sld"><label>裁切</label><input type="range" id="avZoom" min="100" max="220" step="5"><output id="avZoomV"></output></div>
-          <button class="wbtn" id="btnAvCropReset" type="button">重置取景</button>
+
+    <div class="acc" data-acc="bg">
+      <button class="accH" type="button">背景图<span class="accS" id="accSumBg">亮度 · 遮罩 · 位置</span><span class="accI">›</span></button>
+      <div class="accB">
+        <div class="bgpv" id="bgPv"><span>当前背景</span></div>
+        <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
+        <div class="sld"><label>亮度</label><input type="range" id="bgBright" min="0.2" max="1.3" step="0.02"><output id="bgBrightV"></output></div>
+        <div class="sld"><label>遮罩</label><input type="range" id="bgOverlayR" min="0" max="0.9" step="0.02"><output id="bgOverlayV"></output></div>
+        <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="14" step="1"><output id="bgBlurV"></output></div>
+        <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-60" max="60" step="1"><output id="bgXV"></output></div>
+        <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-60" max="60" step="1"><output id="bgYV"></output></div>
+        <div class="sld"><label>缩放</label><input type="range" id="bgZoom" min="0.6" max="1.8" step="0.01"><output id="bgZoomV"></output></div>
+        <div class="sld"><label>角度</label><input type="range" id="bgRot" min="0" max="180" step="1"><output id="bgRotV"></output></div>
+        <button class="wbtn" id="btnBgZero" type="button">图片位置一键归零</button>
+        <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
+        <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
+        <p class="sdesc">群聊背景由群里统一设置，这里的调整只在私聊生效。</p>
+      </div>
+    </div>
+
+    <div class="acc" data-acc="text">
+      <button class="accH" type="button">文字与字体<span class="accS" id="accSumFont">系统 · 15px</span><span class="accI">›</span></button>
+      <div class="accB">
+        <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>
+        <h4 style="margin:10px 0 6px;font-size:13px;color:var(--dim)">字体</h4>
+        <div id="fontFam" style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px">
+          <button type="button" class="wbtn famBtn" data-f="sans" style="width:auto;margin:0;padding:7px 10px;font-size:12px">系统</button>
+          <button type="button" class="wbtn famBtn" data-f="serif" style="width:auto;margin:0;padding:7px 10px;font-size:12px">宋体</button>
+          <button type="button" class="wbtn famBtn" data-f="kai" style="width:auto;margin:0;padding:7px 10px;font-size:12px">楷体</button>
+          <button type="button" class="wbtn famBtn" data-f="mono" style="width:auto;margin:0;padding:7px 10px;font-size:12px">等宽</button>
+        </div>
+        <div class="sld"><label>字体颜色</label><input type="color" id="fontColor" style="width:56px;height:30px;padding:0;border:none;background:none"><output id="fontColorV" style="min-width:64px">默认</output></div>
+        <div class="swrow" id="fontSwatch" style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px">
+          <button type="button" class="sw" data-c="" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:linear-gradient(135deg,#111 50%,#fff 50%)"></button>
+          <button type="button" class="sw" data-c="#111318" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#111318"></button>
+          <button type="button" class="sw" data-c="#3b4252" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#3b4252"></button>
+          <button type="button" class="sw" data-c="#12b7f5" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#12b7f5"></button>
+          <button type="button" class="sw" data-c="#e8ecf1" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#e8ecf1"></button>
+          <button type="button" class="sw" data-c="#7a4fd4" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#7a4fd4"></button>
+        </div>
+        <button class="wbtn" id="btnPureWhite" type="button">一键纯白简约</button>
+      </div>
+    </div>
+
+    <div class="acc" data-acc="bubble">
+      <button class="accH" type="button">气泡<span class="accS" id="accSumBub">圆角 · 透明度</span><span class="accI">›</span></button>
+      <div class="accB">
+        <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>
+        <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
+      </div>
+    </div>
+
+    <div class="acc" data-acc="avatar">
+      <button class="accH" type="button">头像<span class="accS" id="accSumAv">AI · 我的取景</span><span class="accI">›</span></button>
+      <div class="accB">
+        <div id="aiAvatarSec">
+          <h4 style="margin:0 0 6px;font-size:13px;color:var(--dim)">AI 头像（仅管理员可改）</h4>
+          <div class="opt" id="shapeOpt"><button data-shape="circle">圆形</button><button data-shape="square">方形</button></div>
+          <div class="sld"><label>大小</label><input type="range" id="avSize" min="28" max="64" step="1"><output id="avSizeV"></output></div>
+          <div class="sld"><label>边框</label><input type="range" id="avBorder" min="0" max="6" step="1"><output id="avBorderV"></output></div>
+          <button class="wbtn" id="btnUpAvatar" type="button">上传 AI 头像</button>
+          <button class="wbtn" id="btnUpGroupAvatar" type="button" style="display:none">上传群图片</button>
+          <div class="avpv">
+            <div><div class="pv" id="pvAI"></div><div class="lab">AI 头像</div></div>
+          </div>
+          <button class="wbtn" id="btnRmBg" type="button">去掉头像背景（纯色底）</button>
+          <p class="sdesc" id="aiAvatarTip" style="display:none">AI 头像由服务器管理员统一维护，你可以到左侧“我的资料”里改自己的头像。</p>
+        </div>
+        <h4 style="margin:14px 0 6px;font-size:13px;color:var(--dim)">我的头像取景（本机）</h4>
+        <p class="sdesc">在预览里拖动头像调整位置，滑块决定裁切多少。</p>
+        <div class="avcrop">
+          <div class="pvcrop" id="pvMe2"><span class="cropguide"></span></div>
+          <div class="cropctl">
+            <div class="sld"><label>裁切</label><input type="range" id="avZoom" min="100" max="220" step="5"><output id="avZoomV"></output></div>
+            <button class="wbtn" id="btnAvCropReset" type="button">重置取景</button>
+          </div>
         </div>
       </div>
     </div>
-    <div class="sec"><h4>背景与文字</h4>
-      <p class="sdesc">群聊背景由群内统一设置；这里调整的背景只在私聊生效。</p>
-      <div class="sld"><label>亮度</label><input type="range" id="bgBright" min="0.2" max="1.3" step="0.02"><output id="bgBrightV"></output></div>
-      <div class="sld"><label>遮罩</label><input type="range" id="bgOverlayR" min="0" max="0.9" step="0.02"><output id="bgOverlayV"></output></div>
-      <div class="sld"><label>模糊</label><input type="range" id="bgBlur" min="0" max="14" step="1"><output id="bgBlurV"></output></div>
-      <div class="sld"><label>背景 X</label><input type="range" id="bgX" min="-60" max="60" step="1"><output id="bgXV"></output></div>
-      <div class="sld"><label>背景 Y</label><input type="range" id="bgY" min="-60" max="60" step="1"><output id="bgYV"></output></div>
-      <div class="sld"><label>背景缩放</label><input type="range" id="bgZoom" min="0.6" max="1.8" step="0.01"><output id="bgZoomV"></output></div>
-      <div class="sld"><label>背景角度</label><input type="range" id="bgRot" min="0" max="180" step="1"><output id="bgRotV"></output></div>
-      <div class="bgpv" id="bgPv"><span>当前背景</span></div>
-      <button class="wbtn" id="btnBgZero" type="button">图片位置一键归零</button>
-      <button class="wbtn" id="btnUpBg" type="button">上传背景图</button>
-      <button class="wbtn" id="btnResetBg" type="button">恢复服务器默认背景</button>
-      <button class="wbtn" id="btnPureWhite" type="button">一键纯白简约</button>
-      <button class="wbtn" id="btnRandomBg" type="button">换一张渐变背景</button>
-      <div class="sld"><label>字号</label><input type="range" id="fontSize" min="13" max="20" step="1"><output id="fontSizeV"></output></div>
-      <div class="sld"><label>字体颜色</label><input type="color" id="fontColor" style="width:56px;height:30px;padding:0;border:none;background:none"><output id="fontColorV" style="min-width:64px">默认</output></div>
-      <div class="swrow" id="fontSwatch" style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px">
-        <button type="button" class="sw" data-c="" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:linear-gradient(135deg,#111 50%,#fff 50%)"></button>
-        <button type="button" class="sw" data-c="#111318" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#111318"></button>
-        <button type="button" class="sw" data-c="#3b4252" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#3b4252"></button>
-        <button type="button" class="sw" data-c="#12b7f5" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#12b7f5"></button>
-        <button type="button" class="sw" data-c="#e8ecf1" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#e8ecf1"></button>
-        <button type="button" class="sw" data-c="#7a4fd4" style="width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#7a4fd4"></button>
-      </div>
-<div class="sec"><h4>字体</h4></div>
-<div id="fontFam" style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
-  <button type="button" class="wbtn famBtn" data-f="sans" style="width:auto;margin:0;padding:7px 10px;font-size:12px">系统</button>
-  <button type="button" class="wbtn famBtn" data-f="serif" style="width:auto;margin:0;padding:7px 10px;font-size:12px">宋体</button>
-  <button type="button" class="wbtn famBtn" data-f="kai" style="width:auto;margin:0;padding:7px 10px;font-size:12px">楷体</button>
-  <button type="button" class="wbtn famBtn" data-f="mono" style="width:auto;margin:0;padding:7px 10px;font-size:12px">等宽</button>
-</div>
-      <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>      <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
-    </div>
+
   </div>
 </div>
 
@@ -2504,7 +2541,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.72', UP_URL = '';
+var APP_VER = '0.53.73', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -3313,6 +3350,7 @@ function syncMyAvatar(){
 }
 
 function syncSheet(){
+  try{ if(window.__syncAccSum) window.__syncAccSum(); }catch(e){}
   $('avSize').value = S.avatar.size; $('avSizeV').textContent = S.avatar.size;
   if($('avZoom')){ var _sc=Math.round((S.avatar.scale||1)*100); $('avZoom').value=_sc; $('avZoomV').textContent=_sc+'%'; }
   $('avBorder').value = S.avatar.border; $('avBorderV').textContent = S.avatar.border;
@@ -3469,6 +3507,29 @@ Array.prototype.forEach.call(document.querySelectorAll('#fontFam .famBtn'), func
   };
 });
 syncFontFam();
+
+/* 主题面板：手风琴分级 */
+(function(){
+  var host=document.getElementById('sheetTheme');
+  if(!host) return;
+  var heads=host.querySelectorAll('.accH');
+  Array.prototype.forEach.call(heads,function(h){
+    h.onclick=function(){
+      var box=h.parentNode, isOpen=box.classList.contains('open');
+      Array.prototype.forEach.call(host.querySelectorAll('.acc'),function(x){x.classList.remove('open');});
+      if(!isOpen) box.classList.add('open');
+      if(window.__syncAccSum) window.__syncAccSum();
+    };
+  });
+})();
+window.__syncAccSum=function(){
+  try{
+    var fam={sans:'系统',serif:'宋体',kai:'楷体',mono:'等宽'}[(S.font&&S.font.family)||'sans']||'系统';
+    if($('accSumFont')) $('accSumFont').textContent=fam+' · '+(S.font&&S.font.size?S.font.size:15)+'px';
+    if($('accSumBg')) $('accSumBg').textContent='亮度'+(+S.bg.brightness).toFixed(2)+' · 遮罩'+(+S.bg.overlay).toFixed(2)+' · 缩放'+(+(S.bg.zoom||1)).toFixed(2);
+    if($('accSumBub')) $('accSumBub').textContent='圆角'+S.bubble.radius+' · 透明度'+Math.round((S.bubble.opacity==null?1:S.bubble.opacity)*100)+'%';
+  }catch(e){}
+};
 $('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyLookSoon(); };
 $('bubR').onchange = function(){ saveSettings({bubble:{radius:S.bubble.radius}}); };
 $('bubO').oninput = function(e){ S.bubble.opacity=+e.target.value; $('bubOV').textContent=Math.round(S.bubble.opacity*100)+'%'; applyLookSoon(); };
