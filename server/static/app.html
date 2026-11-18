@@ -816,6 +816,17 @@ textarea,input,button,select{font-family:var(--fontf);}
 .acc.open .accI{transform:rotate(90deg)}
 .accB{display:none;padding:2px 14px 14px}
 .acc.open .accB{display:block}
+
+/* 对面（接收方）气泡同样跟随透明度；默认与“我方”共用一个值 */
+html body .row.bot .bub.bub{
+  background-color:color-mix(in srgb,var(--ai) calc(var(--bubO2,var(--bubO,1))*100%),transparent)!important;
+  background-image:none!important;
+  border-color:color-mix(in srgb,var(--line) calc(var(--bubO2,var(--bubO,1))*100%),transparent)!important;
+}
+html body.dark .row.bot .bub.bub{
+  background-color:color-mix(in srgb,var(--panel) calc(var(--bubO2,var(--bubO,1))*100%),transparent)!important;
+  background-image:none!important;
+}
 </style>
 </head>
 <body>
@@ -1303,7 +1314,11 @@ textarea,input,button,select{font-family:var(--fontf);}
       <button class="accH" type="button">气泡<span class="accS" id="accSumBub">圆角 · 透明度</span><span class="accI">›</span></button>
       <div class="accB">
         <div class="sld"><label>圆角</label><input type="range" id="bubR" min="4" max="24" step="1"><output id="bubRV"></output></div>
-        <div class="sld"><label>气泡透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
+        <div class="sld"><label>我方透明度</label><input type="range" id="bubO" min="0.5" max="1" step="0.05"><output id="bubOV"></output></div>
+        <label class="sdesc" style="display:flex;align-items:center;gap:8px;margin:6px 0 2px">
+          <input type="checkbox" id="bubSplit" style="width:auto;margin:0"> 对面气泡单独调节
+        </label>
+        <div class="sld" id="bubO2Wrap" style="display:none"><label>对面透明度</label><input type="range" id="bubO2" min="0" max="1" step="0.05"><output id="bubO2V"></output></div>
       </div>
     </div>
 
@@ -1589,6 +1604,7 @@ function applyState(){
   if(meta && t && t.v) meta.setAttribute('content', t.v.panel);
   r.setProperty('--radius', (S.bubble.radius||14)+'px');
   r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
+  r.setProperty('--bubO2', Math.max(0, (S.bubble.opacityOther==null ? (S.bubble.opacity==null ? 1 : S.bubble.opacity) : S.bubble.opacityOther)));
 
   var B = curBg();
   applyAvatarVars();
@@ -1738,6 +1754,7 @@ function applyLook(){
   r.setProperty('--fs', (S.font && S.font.size ? S.font.size : 15)+'px');
   r.setProperty('--radius', (S.bubble.radius||14)+'px');
   r.setProperty('--bubO', Math.max(0.5, (S.bubble.opacity==null ? 1 : S.bubble.opacity)));
+  r.setProperty('--bubO2', Math.max(0, (S.bubble.opacityOther==null ? (S.bubble.opacity==null ? 1 : S.bubble.opacity) : S.bubble.opacityOther)));
   var fc = S.font && /^#[0-9a-fA-F]{6}$/.test(S.font.color||'') ? S.font.color : '';
   if(fc) r.setProperty('--ink', fc);
   applyAvatarVars();
@@ -2541,7 +2558,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.73', UP_URL = '';
+var APP_VER = '0.53.74', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -3369,6 +3386,10 @@ function syncSheet(){
   $('bubR').value = S.bubble.radius; $('bubRV').textContent = S.bubble.radius;
   var bo = S.bubble.opacity == null ? 1 : +S.bubble.opacity;
   $('bubO').value = bo; $('bubOV').textContent = Math.round(bo*100)+'%';
+  var bo2 = S.bubble.opacityOther == null ? bo : +S.bubble.opacityOther;
+  var split = !!S.bubble.opacitySplit;
+  if($('bubSplit')){ $('bubSplit').checked = split; $('bubO2Wrap').style.display = split ? '' : 'none'; }
+  if($('bubO2')){ $('bubO2').value = bo2; $('bubO2V').textContent = Math.round(bo2*100)+'%'; }
   Array.prototype.forEach.call($('shapeOpt').querySelectorAll('button'), function(b){
     b.classList.toggle('on', b.dataset.shape===S.avatar.shape);
   });
@@ -3533,7 +3554,21 @@ window.__syncAccSum=function(){
 $('bubR').oninput = function(e){ S.bubble.radius=+e.target.value; $('bubRV').textContent=e.target.value; applyLookSoon(); };
 $('bubR').onchange = function(){ saveSettings({bubble:{radius:S.bubble.radius}}); };
 $('bubO').oninput = function(e){ S.bubble.opacity=+e.target.value; $('bubOV').textContent=Math.round(S.bubble.opacity*100)+'%'; applyLookSoon(); };
-$('bubO').onchange = function(){ saveSettings({bubble:{opacity:S.bubble.opacity}}); };
+$('bubO').onchange = function(){
+  if(!S.bubble.opacitySplit) S.bubble.opacityOther = S.bubble.opacity;
+  saveSettings({bubble:{opacity:S.bubble.opacity, opacityOther:S.bubble.opacityOther}});
+};
+if($('bubSplit')) $('bubSplit').onchange = function(e){
+  S.bubble.opacitySplit = e.target.checked;
+  if(!S.bubble.opacitySplit) S.bubble.opacityOther = S.bubble.opacity;
+  $('bubO2Wrap').style.display = S.bubble.opacitySplit ? '' : 'none';
+  applyLook(); syncSheet();
+  saveSettings({bubble:{opacitySplit:S.bubble.opacitySplit, opacityOther:S.bubble.opacityOther}});
+};
+if($('bubO2')){
+  $('bubO2').oninput = function(e){ S.bubble.opacityOther=+e.target.value; $('bubO2V').textContent=Math.round(S.bubble.opacityOther*100)+'%'; applyLookSoon(); };
+  $('bubO2').onchange = function(){ saveSettings({bubble:{opacityOther:S.bubble.opacityOther}}); };
+}
 
 $('btnUpAvatar').onclick = function(){ $('pickerAvatar').click(); };
 $('pickerAvatar').onchange = function(){
