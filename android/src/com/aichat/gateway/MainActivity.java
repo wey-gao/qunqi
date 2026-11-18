@@ -165,6 +165,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String u) {
                 super.onPageFinished(v, u);
+                try { v.evaluateJavascript("window.__QUNQI_NATIVE=1;", null); } catch (Throwable ignored) {}
                 if (pendingJoin != null) {
                     final String code = pendingJoin;
                     pendingJoin = null;

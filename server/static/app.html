@@ -2500,7 +2500,7 @@ function setState(ok, text){
 }
 function refreshSend(){ $('send').disabled = !(ws && ws.readyState===1 && ($('input').value.trim() || pending.length)); }
 
-var APP_VER = '0.53.64', UP_URL = '';
+var APP_VER = '0.53.65', UP_URL = '';
 function verNum(v){ return String(v||'0').split('.').map(function(x){ return parseInt(x,10)||0; }); }
 function verGt(a,b){ var x=verNum(a), y=verNum(b); for(var i=0;i<Math.max(x.length,y.length);i++){ var p=x[i]||0, q=y[i]||0; if(p>q) return true; if(p<q) return false; } return false; }
 function showUpdate(v, url, notes){
@@ -2513,9 +2513,8 @@ function showUpdate(v, url, notes){
     if(!UP_URL){ toast('服务器还没配置下载地址'); return; }
     var abs = UP_URL;
     if(abs.indexOf('http')!==0 && API_BASE) abs = API_BASE.replace(/\/+$/,'') + (abs.charAt(0)==='/' ? abs : '/'+abs);
-    // 原生下载器只把包存进 Download/Qunqi，不会自动装。
-    // 文件名靠 URL 里的 .apk 后缀才认得出来，所以这里必须传带 .apk 的地址。
-    toast('正在下载…完成后请到 文件管理 → Download → Qunqi 点安装');
+    // 原生版：应用内下载完自动调起安装；网页版只能走浏览器下载
+    toast(window.__QUNQI_NATIVE ? '正在下载安装包，完成后会自动弹出安装' : '正在下载安装包…');
     location.href = abs;
   };
 }
