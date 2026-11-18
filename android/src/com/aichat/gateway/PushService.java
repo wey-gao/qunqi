@@ -42,12 +42,25 @@ public class PushService extends Service {
         if (Build.VERSION.SDK_INT < 26) return;
         NotificationManager nm = c.getSystemService(NotificationManager.class);
         if (nm == null) return;
-        NotificationChannel svc = new NotificationChannel(CH_SVC, "后台消息同步", NotificationManager.IMPORTANCE_MIN);
+        NotificationChannel svc = new NotificationChannel(CH_SVC, "后台消息同步", NotificationManager.IMPORTANCE_LOW);
         svc.setShowBadge(false);
         NotificationChannel msg = new NotificationChannel(CH_MSG, "新消息提醒", NotificationManager.IMPORTANCE_HIGH);
         msg.enableVibration(true);
         nm.createNotificationChannel(svc);
         nm.createNotificationChannel(msg);
+    }
+
+    /* 每 15 分钟一个闹钟；服务被系统清掉也能靠它复活，不再依赖 App 是否被打开 */
+    static void scheduleWatchdog(Context c) {
+        try {
+            android.app.AlarmManager am = (android.app.AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            Intent i = new Intent(c, WatchdogReceiver.class);
+            PendingIntent pi = PendingIntent.getBroadcast(c, 7001, i,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
+            am.setInexactRepeating(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    android.os.SystemClock.elapsedRealtime() + 5 * 60 * 1000L, 15 * 60 * 1000L, pi);
+        } catch (Throwable ignored) {}
     }
 
     static void startIfConfigured(Context c) {
@@ -81,6 +94,7 @@ public class PushService extends Service {
                 prefs(this).edit().putLong("started_at", System.currentTimeMillis()).apply();
         } catch (Throwable ignored) {}
         if (!running) { running = true; startWorker(); }
+        scheduleWatchdog(this);
         return START_STICKY;
     }
 
@@ -217,6 +231,17 @@ public class PushService extends Service {
         try { prefs(this).edit().putLong("started_at", 0).apply(); } catch (Throwable ignored) {}
         if (worker != null) worker.interrupt();
         super.onDestroy();
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        /* 用户从最近任务里划掉 App：服务重新起来，别让通知断掉 */
+        try {
+            Intent again = new Intent(this, PushService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(again); else startService(again);
+        } catch (Throwable ignored) {}
+        scheduleWatchdog(this);
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override

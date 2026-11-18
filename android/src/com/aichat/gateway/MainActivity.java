@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         visible = true;
-        try { PushService.ensureChannels(this); PushService.startIfConfigured(this); } catch (Throwable ignored) {}
+        try { PushService.ensureChannels(this); PushService.startIfConfigured(this); PushService.scheduleWatchdog(this); } catch (Throwable ignored) {}
         startCredSync();
         try { askBatteryWhitelist(); } catch (Throwable ignored) {}
     }
