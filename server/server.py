@@ -3079,6 +3079,18 @@ async def push_poll(request: Request, device: str = "", since: int = 0):
     return {"items": items[-20:], "max_ts": mx}
 
 
+@app.get("/api/font/{name}")
+async def font_file(name: str):
+    """完整字库下发（楷体/宋体 woff2），首次加载后浏览器缓存一年，不占安装包体积。"""
+    if name not in ("kai.woff2", "song.woff2"):
+        raise HTTPException(404, "no such font")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", name)
+    if not os.path.exists(path):
+        raise HTTPException(404, "font missing")
+    return FileResponse(path, media_type="font/woff2",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.post("/api/push/heartbeat")
 async def push_heartbeat(request: Request, device: str = ""):
     """后台轮询服务自检上报：活着/最后轮询时间/最近错误，用于排查通知不弹。"""
