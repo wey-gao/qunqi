@@ -85,6 +85,7 @@ PUSH_REQUIRE_SECRET = os.getenv("PUSH_REQUIRE_SECRET", "1" if PUBLIC_MODE else "
 
 MAX_UPLOAD = int(os.getenv("MAX_UPLOAD_MB", "300")) * 1024 * 1024
 MAX_TOTAL = int(os.getenv("MAX_TOTAL_MB", "2048")) * 1024 * 1024
+RANGE_CHUNK = int(os.getenv("RANGE_CHUNK_MB", "2")) * 1024 * 1024  # 单次 Range 响应上限
 UPLOAD_PER_MIN = int(os.getenv("UPLOAD_PER_MIN", "20"))
 _up_rl: dict = {}
 
@@ -192,6 +193,8 @@ DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".markdown", ".csv"
            ".sql", ".sh", ".bash", ".bat", ".ps1", ".java", ".go", ".rs", ".php", ".rb",
            ".swift", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".r", ".lua", ".pl", ".tex"}
 ARCHIVE_EXT = {".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz"}
+APP_EXT = {".apk", ".xapk", ".apks", ".aab", ".ipa", ".exe", ".msi", ".dmg", ".pkg",
+           ".deb", ".rpm", ".appimage", ".run", ".flatpak", ".snap"}
 LEGACY_OFFICE = {".doc", ".xls", ".ppt", ".rtf", ".odt", ".ods", ".odp", ".epub"}
 
 THEMES = [
@@ -1527,6 +1530,8 @@ def magic_mismatch(ext: str, head: bytes) -> bool:
 def classify(ext: str) -> str:
     if ext in IMAGE_EXT:
         return "image"
+    if ext in APP_EXT:
+        return "app"
     if ext in VIDEO_EXT:
         return "video"
     if ext in AUDIO_EXT:
@@ -1989,8 +1994,15 @@ class AgentLink:
             msg = params.get("message")
             if isinstance(msg, str):
                 msg = [{"type": "text", "data": {"text": msg}}]
-            text, images = parse_chain(msg or [])
+            text, images, files = parse_chain(msg or [])
             images = [x for x in (materialize_image(i) for i in images) if x]
+            attachments = []
+            for _ref, _nm, _mm in files:
+                _meta = materialize_file(_ref, _nm, _mm)
+                if _meta:
+                    attachments.append(_meta)
+                else:
+                    log("文件段落盘失败，已跳过：" + str(_nm or _ref)[:60])
             actions = extract_actions(text)
             clean = strip_actions(text)
             notes = []
@@ -1998,8 +2010,9 @@ class AgentLink:
                 st, notes = apply_actions(actions, conv, BOT_ID)
                 await broadcast_all({"t": "ui_update", "settings": st, "actions": actions,
                                      "themes": THEMES + get_setting("custom_themes", [])})
-            saved = add_message(conv, "bot", "bot", "bot",
-                                {"text": clean, "images": images, "attachments": [], "actions": actions})
+            _mtype = "file" if attachments else "bot"
+            saved = add_message(conv, "bot", "bot", _mtype,
+                                {"text": clean, "images": images, "attachments": attachments, "actions": actions})
             await broadcast(conv, {"t": "msg_push", **saved})
             for n in notes:
                 sysmsg = add_message(conv, "system", "sys", "sys", {"text": n})
@@ -2139,8 +2152,83 @@ def materialize_image(ref: str) -> str:
         return ""
 
 
+def materialize_file(ref: str, name: str = "", mime: str = "") -> dict | None:
+    """把 AstrBot 发来的文件引用（base64:// / file:// / http(s)://）落成本地文件，
+    返回 attachment 元数据；失败返回 None。"""
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    raw_name = pathlib.Path(name or "").name or "file"
+    try:
+        raw = b""
+        if ref.startswith("base64://"):
+            b64 = ref[len("base64://"):]
+            raw = base64.b64decode(b64 + "=" * (-len(b64) % 4))
+        elif ref.startswith("file://"):
+            src = pathlib.Path(urllib.parse.unquote(ref[len("file://"):]))
+            if not src.exists():
+                log("文件转存失败：源文件不存在")
+                return None
+            raw = src.read_bytes()
+            if not raw_name or raw_name == "file":
+                raw_name = src.name
+        elif ref.startswith(("http://", "https://")):
+            import urllib.request as _ur
+            req = _ur.Request(ref, headers={"User-Agent": "qunqi/1.0"})
+            with _ur.urlopen(req, timeout=60) as r:
+                raw = r.read()
+                cd = r.headers.get("content-disposition") or ""
+                if not name and "filename=" in cd:
+                    raw_name = cd.split("filename=")[-1].strip('\"; ')
+        else:
+            # 已经是本地路径或本网关 URL
+            if ref.startswith("/media/") or ref.startswith("/api/files/"):
+                return None
+            cand = pathlib.Path(ref)
+            if cand.exists():
+                raw = cand.read_bytes()
+            else:
+                return None
+        if not raw:
+            return None
+        ext = pathlib.Path(raw_name).suffix.lower()[:10]
+        if not ext:
+            head = raw[:12]
+            if head.startswith(b"\x89PNG"):
+                ext, raw_name = ".png", raw_name + ".png"
+            elif head.startswith(b"\xff\xd8"):
+                ext, raw_name = ".jpg", raw_name + ".jpg"
+            elif head.startswith(b"GIF8"):
+                ext, raw_name = ".gif", raw_name + ".gif"
+            elif head.startswith(b"%PDF"):
+                ext, raw_name = ".pdf", raw_name + ".pdf"
+            elif head.startswith(b"PK"):
+                ext, raw_name = ".zip", raw_name + ".zip"
+            else:
+                ext = ".bin"
+                if not raw_name.endswith(".bin"):
+                    raw_name += ".bin"
+        fid = "f-" + uuid.uuid4().hex[:12]
+        target = UPLOADS / (fid + ext)
+        target.write_bytes(raw)
+        kind = classify(ext)
+        use_mime = mime or "application/octet-stream"
+        conn = db()
+        conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (fid, raw_name, use_mime, kind, len(raw), str(target), 0, "", int(time.time() * 1000)))
+        conn.commit()
+        conn.close()
+        return {"file_id": fid, "name": raw_name, "mime": use_mime, "kind": kind,
+                "size": len(raw), "url": "/api/files/" + fid, "media": "/media/" + fid,
+                "text_len": 0, "note": ""}
+    except Exception as exc:
+        log("文件转存失败：" + type(exc).__name__)
+        return None
+
+
 def parse_chain(chain: list):
-    texts, images = [], []
+    """解析 OneBot 消息链，返回 (text, images, files)。files 是 (ref, name, mime) 三元组。"""
+    texts, images, files = [], [], []
     for seg in chain:
         t = seg.get("type")
         d = seg.get("data") or {}
@@ -2148,9 +2236,14 @@ def parse_chain(chain: list):
             texts.append(d.get("text", ""))
         elif t == "image":
             images.append(d.get("url") or d.get("file", ""))
+        elif t == "file":
+            ref = d.get("url") or d.get("file") or d.get("path") or ""
+            if ref:
+                files.append((ref, d.get("name") or d.get("file_name") or "",
+                              d.get("mime") or d.get("content_type") or ""))
         elif t == "record":
             texts.append("[语音]")
-    return "".join(texts).strip(), images
+    return "".join(texts).strip(), images, files
 
 
 def extract_actions(text: str) -> list:
@@ -3221,14 +3314,34 @@ async def api_agent_send(request: Request):
     if row and row["mute_until"] and int(row["mute_until"]) > int(time.time()) and not is_admin(uid):
         raise HTTPException(403, "你已被禁言")
     text = (body.get("text") or "").strip()[:4000]
-    if not text:
+    atts = body.get("attachments") or []
+    if not text and not atts:
         raise HTTPException(400, "text 不能为空")
     content = {"text": text}
+    if atts:
+        clean = []
+        for a in atts[:10]:
+            if not isinstance(a, dict) or not a.get("file_id"):
+                continue
+            clean.append({
+                "file_id": a["file_id"],
+                "name": a.get("name") or a["file_id"],
+                "mime": a.get("mime") or "application/octet-stream",
+                "kind": a.get("kind") or "doc",
+                "size": int(a.get("size") or 0),
+                "url": "/api/files/" + a["file_id"],
+                "media": "/media/" + a["file_id"],
+                "text_len": int(a.get("text_len") or 0),
+                "note": a.get("note") or "",
+            })
+        if clean:
+            content["attachments"] = clean
     if body.get("reply_to"):
         content["reply_to"] = int(body["reply_to"])
     if body.get("mentions"):
         content["mentions"] = [int(x) for x in body["mentions"]][:20]
-    msg = add_message(conv, str(uid), "agent", "text", content)
+    mtype = "file" if content.get("attachments") else "text"
+    msg = add_message(conv, str(uid), "agent", mtype, content)
     await broadcast(conv, {"t": "msg_push", **msg})
     return {"ok": True, **msg}
 
@@ -3386,14 +3499,46 @@ def _apk_sha() -> dict:
     return info
 
 
-def store_file(raw: bytes, name: str, mime: str, is_admin_user: bool, warn: str):
+def uploads_used() -> int:
+    """已用存储量：走 file 表聚合，避免每次上传扫整个 uploads 目录。"""
+    try:
+        conn = db()
+        try:
+            row = conn.execute("SELECT COALESCE(SUM(size),0) FROM file").fetchone()
+            return int(row[0] or 0)
+        finally:
+            conn.close()
+    except Exception:
+        try:
+            return sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
+        except Exception:
+            return 0
+
+
+def store_file(raw: bytes, name: str, mime: str, is_admin_user: bool, warn: str,
+               src_path: pathlib.Path | None = None):
+    """落盘存储。src_path 非空时直接从该路径移动文件，不把整个文件读进内存。"""
     raw_name = pathlib.Path(name).name
     ext = pathlib.Path(raw_name).suffix.lower()[:10]
-    if STRICT_MAGIC and magic_mismatch(ext, raw[:16]):
+    head = b""
+    if src_path is not None:
+        try:
+            with open(src_path, "rb") as _fh:
+                head = _fh.read(16)
+        except Exception:
+            head = b""
+        size = src_path.stat().st_size
+    else:
+        head = raw[:16]
+        size = len(raw)
+    if STRICT_MAGIC and magic_mismatch(ext, head):
         raise HTTPException(415, "文件内容与扩展名不符，请检查后重试")
     fid = "f-" + uuid.uuid4().hex[:12]
     target = UPLOADS / (fid + ext)
-    target.write_bytes(raw)
+    if src_path is not None:
+        shutil.move(str(src_path), str(target))
+    else:
+        target.write_bytes(raw)
     if ext in (".heic", ".heif"):
         conv = convert_heic(target)
         if conv is not None:
@@ -3419,11 +3564,18 @@ def store_file(raw: bytes, name: str, mime: str, is_admin_user: bool, warn: str)
         note = "压缩包仅列文件名，不解压；下载后本地解压"
         if not text:
             note = "该压缩格式不支持在线查看，请下载后解压"
+    elif kind == "app":
+        _appname = {"apk": "安卓安装包", "xapk": "安卓安装包", "apks": "安卓分包安装包",
+                    "aab": "安卓 App Bundle", "ipa": "iOS 安装包", "exe": "Windows 安装程序",
+                    "msi": "Windows 安装包", "dmg": "macOS 磁盘映像", "pkg": "macOS 安装包",
+                    "deb": "Debian 安装包", "rpm": "RPM 安装包",
+                    "appimage": "Linux 可执行包", "run": "Linux 安装脚本"}
+        note = _appname.get(ext.lstrip("."), "安装包") + "，下载后在设备上安装"
     elif kind == "other":
         note = "仅支持预览与下载"
     conn = db()
     conn.execute("INSERT INTO file (id,name,mime,kind,size,path,text_len,note,ts) VALUES (?,?,?,?,?,?,?,?,?)",
-                 (fid, raw_name, mime, kind, len(raw), str(target), len(text), note, int(time.time() * 1000)))
+                 (fid, raw_name, mime, kind, size, str(target), len(text), note, int(time.time() * 1000)))
     conn.commit()
     conn.close()
     meta = file_meta(_file_row(fid))
@@ -3464,10 +3616,7 @@ async def upload(request: Request):
         if win[1] >= UPLOAD_PER_MIN:
             raise HTTPException(429, "上传太频繁，稍后再试")
         _up_rl[ip] = (win[0], win[1] + 1)
-    try:
-        used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
-    except Exception:
-        used = 0
+    used = uploads_used()
     name = unquote(request.headers.get("x-filename", "file.bin"))
     mime = request.headers.get("x-mime", "application/octet-stream")
     raw = await request.body()
@@ -3556,23 +3705,35 @@ async def chunk_finish(up_id: str, request: Request):
     part = pathlib.Path(meta["path"])
     if not part.exists():
         raise HTTPException(404, "分片文件丢失，请重新上传")
-    raw = part.read_bytes()
-    try:
-        part.unlink()
-    except Exception:
-        pass
-    if len(raw) != meta["size"]:
-        raise HTTPException(400, "分片未传完：%d/%d 字节" % (len(raw), meta["size"]))
+    actual = part.stat().st_size
+    if actual != meta["size"]:
+        try:
+            part.unlink()
+        except Exception:
+            pass
+        raise HTTPException(400, "分片未传完：%d/%d 字节" % (actual, meta["size"]))
     if not is_admin(uid) and meta["size"] > MAX_UPLOAD:
+        try:
+            part.unlink()
+        except Exception:
+            pass
         raise HTTPException(413, "超过大小上限")
-    try:
-        used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
-    except Exception:
-        used = 0
+    used = uploads_used()
     warn = ""
-    if used + len(raw) >= MAX_TOTAL:
+    if used + actual >= MAX_TOTAL:
+        try:
+            part.unlink()
+        except Exception:
+            pass
         raise HTTPException(507, "服务器存储已满")
-    return store_file(raw, meta["name"], meta["mime"], is_admin(uid), warn)
+    try:
+        return store_file(b"", meta["name"], meta["mime"], is_admin(uid), warn, src_path=part)
+    except Exception:
+        try:
+            part.unlink()
+        except Exception:
+            pass
+        raise
 
 
 @app.get("/api/files/{fid}")
@@ -3654,30 +3815,44 @@ async def thumb(fid: str, w: int = 128):
     w = max(32, min(int(w), 512))
     src = pathlib.Path(row["path"])
     THUMBS.mkdir(parents=True, exist_ok=True)
-    # 先判断源图是否带透明通道：带就出 PNG 缩略图，别把透明背景压成黑/白底
-    alpha = False
-    try:
+
+    # 缓存命中优先：两种扩展名都查，命中就不再打开原图
+    for _ext, _mime in (("png", "image/png"), ("jpg", "image/jpeg")):
+        hit = THUMBS / f"{fid}-{w}.{_ext}"
+        if hit.exists():
+            return FileResponse(hit, media_type=_mime,
+                                headers={"Cache-Control": "public, max-age=604800"})
+
+    def _build() -> str | None:
+        """在线程池里跑 PIL，避免阻塞事件循环。返回扩展名。"""
         from PIL import Image
-        probe = Image.open(src)
-        alpha = probe.mode in ("RGBA", "LA") or (probe.mode == "P" and "transparency" in probe.info)
-        probe.close()
-    except Exception:
-        alpha = str(row["mime"]) == "image/png"
-    ext = "png" if alpha else "jpg"
-    cache = THUMBS / f"{fid}-{w}.{ext}"
-    if not cache.exists():
+        alpha = False
         try:
-            from PIL import Image
-            im = Image.open(src)
-            im = im.convert("RGBA" if alpha else "RGB")
-            im.thumbnail((w, w))
-            if alpha:
-                im.save(cache, "PNG", optimize=True)
-            else:
-                im.save(cache, "JPEG", quality=84, optimize=True)
+            with Image.open(src) as probe:
+                alpha = (probe.mode in ("RGBA", "LA")
+                         or (probe.mode == "P" and "transparency" in probe.info))
         except Exception:
-            return FileResponse(src)
-    return FileResponse(cache, media_type=("image/png" if alpha else "image/jpeg"),
+            alpha = str(row["mime"]) == "image/png"
+        ext = "png" if alpha else "jpg"
+        cache = THUMBS / f"{fid}-{w}.{ext}"
+        try:
+            with Image.open(src) as im:
+                im = im.convert("RGBA" if alpha else "RGB")
+                im.thumbnail((w, w))
+                if alpha:
+                    im.save(cache, "PNG", optimize=True)
+                else:
+                    im.save(cache, "JPEG", quality=84, optimize=True)
+            return ext
+        except Exception:
+            return None
+
+    import asyncio as _asyncio
+    ext = await _asyncio.to_thread(_build)
+    if not ext:
+        return FileResponse(src)
+    cache = THUMBS / f"{fid}-{w}.{ext}"
+    return FileResponse(cache, media_type=("image/png" if ext == "png" else "image/jpeg"),
                         headers={"Cache-Control": "public, max-age=604800"})
 
 
@@ -3704,7 +3879,7 @@ async def media(fid: str, request: Request, still: int = 0):
     if row is None:
         raise HTTPException(404, "不存在")
     if still:
-        sp = _still_frame(pathlib.Path(row["path"]), fid)
+        sp = await asyncio.to_thread(_still_frame, pathlib.Path(row["path"]), fid)
         if sp.suffix.lower() in (".jpg", ".jpeg"):
             return FileResponse(sp, media_type="image/jpeg",
                                 headers={"Cache-Control": "public, max-age=604800"})
@@ -3718,18 +3893,23 @@ async def media(fid: str, request: Request, still: int = 0):
     rng = request.headers.get("range")
     if not rng:
         return FileResponse(path, media_type=mime,
-                            headers={"Cache-Control": "public, max-age=604800"})
+                            headers={"Cache-Control": "public, max-age=604800",
+                                     "Accept-Ranges": "bytes"})
     m = re.match(r"bytes=(\d*)-(\d*)", rng)
     start = int(m.group(1) or 0) if m else 0
-    end = int(m.group(2)) if (m and m.group(2)) else size - 1
-    end = min(end, size - 1)
+    req_end = int(m.group(2)) if (m and m.group(2)) else size - 1
+    end = min(req_end, size - 1)
+    # 单次响应上限：防止客户端请求 bytes=0- 时把整个大文件读进内存
+    if end - start + 1 > RANGE_CHUNK:
+        end = start + RANGE_CHUNK - 1
     length = max(end - start + 1, 0)
     with open(path, "rb") as f:
         f.seek(start)
         data = f.read(length)
     return Response(content=data, status_code=206, media_type=mime,
                     headers={"Content-Range": f"bytes {start}-{end}/{size}",
-                             "Accept-Ranges": "bytes", "Content-Length": str(length)})
+                             "Accept-Ranges": "bytes", "Content-Length": str(length),
+                             "Cache-Control": "public, max-age=604800"})
 
 
 @app.post("/api/files/{fid}/removebg")
@@ -3835,7 +4015,7 @@ async def kick_device(dev: str, request: Request, device: str = ""):
 async def storage_info(device: str = ""):
     require_device(device)
     try:
-        used = sum(f.stat().st_size for f in UPLOADS.glob("*") if f.is_file())
+        used = uploads_used()
         thumbs = sum(f.stat().st_size for f in THUMBS.glob("*") if f.is_file())
     except Exception:
         used = thumbs = 0
@@ -4316,6 +4496,28 @@ async def ws_endpoint(ws: WebSocket):
                 clients[c].discard(ws)
         except Exception:
             pass
+
+
+# ---------------- 临时接管中继反代 ----------------
+@app.api_route("/hook/{path:path}", methods=["GET", "POST"])
+async def _hook_proxy(request: Request, path: str):
+    qs = request.url.query
+    url = "http://127.0.0.1:8098/" + path + (("?" + qs) if qs else "")
+    body = await request.body()
+
+    def _do():
+        import urllib.request
+        hdrs = {"Content-Type": request.headers.get("content-type", "application/json")}
+        req = urllib.request.Request(url, data=body if body else None,
+                                     method=request.method, headers=hdrs)
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return r.status, r.read(), r.headers.get("content-type", "text/plain")
+        except Exception as e:
+            return 502, str(e).encode(), "text/plain"
+
+    code, data, ctype = await asyncio.to_thread(_do)
+    return Response(content=data, status_code=code, media_type=ctype)
 
 
 if __name__ == "__main__":

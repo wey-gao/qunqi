@@ -6,3 +6,7 @@ build/
 gateway.env
 data/
 *.db
+
+# 本地凭据，禁止入库
+SECRETS.local.md
+*SECRETS*
