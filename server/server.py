@@ -3079,6 +3079,18 @@ async def push_poll(request: Request, device: str = "", since: int = 0):
     return {"items": items[-20:], "max_ts": mx}
 
 
+@app.post("/api/push/heartbeat")
+async def push_heartbeat(request: Request, device: str = ""):
+    """后台轮询服务自检上报：活着/最后轮询时间/最近错误，用于排查通知不弹。"""
+    uid, dev = require_req_device(request, device)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    print(f"[push-hb] uid={uid} alive={body.get('alive')} poll={body.get('lastPoll')} started={body.get('startedAt')} err={str(body.get('lastErr') or '')[:120]}", flush=True)
+    return {"ok": True}
+
+
 @app.get("/api/convs/{cid}/members")
 async def get_members(cid: str):
     ms = members_of(cid)

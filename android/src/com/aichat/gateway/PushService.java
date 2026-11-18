@@ -84,8 +84,37 @@ public class PushService extends Service {
         return START_STICKY;
     }
 
+
+    private void reportHb(String err) {
+        try {
+            SharedPreferences p = prefs(this);
+            String base = p.getString("base", "");
+            String dev = p.getString("device", "");
+            String sec = p.getString("secret", "");
+            if (base.length() == 0 || dev.length() == 0) return;
+            JSONObject body = new JSONObject();
+            body.put("alive", true);
+            body.put("lastPoll", p.getLong("last_poll", 0));
+            body.put("startedAt", p.getLong("started_at", 0));
+            body.put("lastErr", err == null ? "" : err);
+            HttpURLConnection c = (HttpURLConnection) new URL(
+                    base.replaceAll("/+$", "") + "/api/push/heartbeat").openConnection();
+            c.setRequestMethod("POST");
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(8000);
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/json");
+            if (sec.length() > 0) c.setRequestProperty("X-Device-Secret", sec);
+            c.setRequestProperty("X-Device", dev);
+            c.getOutputStream().write(body.toString().getBytes("UTF-8"));
+            c.getResponseCode();
+            c.disconnect();
+        } catch (Throwable ignored) {}
+    }
+
     private void startWorker() {
         worker = new Thread(() -> {
+            reportHb("start");
             int wait = INTERVAL;
             boolean hadNews = false;
             while (running) {
@@ -124,6 +153,7 @@ public class PushService extends Service {
                     hadNews = (arr != null && arr.length() > 0);
                     boolean dnd = p.getBoolean("dnd", false);
                     p.edit().putLong("last_poll", System.currentTimeMillis()).putString("last_err", "").apply();
+                    reportHb("");
                     if (hadNews && !MainActivity.isVisible() && !dnd) {
                         for (int i = Math.max(0, arr.length() - 3); i < arr.length(); i++) {
                             JSONObject m = arr.getJSONObject(i);
@@ -136,6 +166,7 @@ public class PushService extends Service {
                     try {
                         prefs(this).edit().putString("last_err",
                                 e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage())).apply();
+                        reportHb(e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage()));
                     } catch (Throwable ignored) {}
                 }
                 if (!hadNews) wait = Math.min(wait * 2, MAX_INTERVAL);
@@ -180,6 +211,7 @@ public class PushService extends Service {
 
     @Override
     public void onDestroy() {
+        reportHb("destroyed");
         running = false;
         alive = false;
         try { prefs(this).edit().putLong("started_at", 0).apply(); } catch (Throwable ignored) {}
