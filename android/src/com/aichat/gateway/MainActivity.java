@@ -991,7 +991,8 @@ public class MainActivity extends Activity {
                 c.setInstanceFollowRedirects(true);
                 c.setRequestProperty("User-Agent", "Qunqi/1.0");
                 in = c.getInputStream();
-                File out = new File(getCacheDir(), "update.apk");
+                // 文件名带时间戳，避免上一版包残留被当成新包安装
+                File out = new File(getCacheDir(), "update_" + System.currentTimeMillis() + ".apk");
                 FileOutputStream fo = new FileOutputStream(out);
                 copy(in, fo);
                 try { fo.getFD().sync(); } catch (Throwable ignored) {}
@@ -1012,6 +1013,31 @@ public class MainActivity extends Activity {
 
     private void installApk(File apk) {
         try {
+            // 先核对包内版本，避免把旧包/残留文件当成新版本装上去
+            android.content.pm.PackageInfo pi = getPackageManager()
+                    .getPackageArchiveInfo(apk.getAbsolutePath(), 0);
+            String pkgName = pi == null ? null : pi.packageName;
+            String newVer = pi == null ? "?" : pi.versionName;
+            int newCode = pi == null ? -1 : pi.versionCode;
+            int curCode = -1;
+            String curVer = "?";
+            try {
+                android.content.pm.PackageInfo cur = getPackageManager()
+                        .getPackageInfo(getPackageName(), 0);
+                curCode = cur.versionCode;
+                curVer = cur.versionName;
+            } catch (Throwable ignored) {}
+            if (pi == null || !getPackageName().equals(pkgName)) {
+                toastUi("下载的文件不是有效的群栖安装包，已取消");
+                apk.delete();
+                return;
+            }
+            if (newCode > 0 && curCode > 0 && newCode <= curCode) {
+                toastUi("下载到的是旧包 " + newVer + "（当前 " + curVer + "），已取消，请稍后重试");
+                apk.delete();
+                return;
+            }
+            toastUi("正在安装 " + newVer + "（当前 " + curVer + "）");
             if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
                 toastUi("请允许「安装未知应用」，允许后会自动继续");
                 try {
@@ -1019,7 +1045,7 @@ public class MainActivity extends Activity {
                             Uri.parse("package:" + getPackageName())));
                 } catch (Throwable ignored) {}
             }
-            Uri uri = Uri.parse("content://" + APK_AUTHORITY + "/update.apk");
+            Uri uri = Uri.parse("content://" + APK_AUTHORITY + "/" + apk.getName());
             Intent it = new Intent(Intent.ACTION_VIEW);
             it.setDataAndType(uri, "application/vnd.android.package-archive");
             it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);

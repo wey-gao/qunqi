@@ -19,8 +19,12 @@ public class ApkProvider extends ContentProvider {
 
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
-        File f = new File(getContext().getCacheDir(), "update.apk");
-        if (!f.exists()) throw new FileNotFoundException("update.apk");
+        String name = uri.getLastPathSegment();
+        if (name == null || name.contains("/") || name.contains("..")) {
+            throw new FileNotFoundException("bad name");
+        }
+        File f = new File(getContext().getCacheDir(), name);
+        if (!f.exists()) throw new FileNotFoundException(name);
         return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY);
     }
 
